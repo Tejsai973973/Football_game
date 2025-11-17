@@ -302,7 +302,11 @@ function gameLoopRoom(room) {
     room.matchTime -= dt;
 
     // Half-time
-    if (!room.halfTimeTriggered && prevTime > HALF_TIME && room.matchTime <= HALF_TIME) {
+    if (
+      !room.halfTimeTriggered &&
+      prevTime > HALF_TIME &&
+      room.matchTime <= HALF_TIME
+    ) {
       room.matchTime = HALF_TIME;
       room.halfTimeTriggered = true;
       room.secondHalf = true;
@@ -402,6 +406,32 @@ function updatePlayers(room, dt) {
     if (p.y > FIELD_HEIGHT - PLAYER_RADIUS)
       p.y = FIELD_HEIGHT - PLAYER_RADIUS;
 
+    // 🔥 collide player with ball (prevents phasing when sprinting)
+    const b = room.ball;
+    {
+      const dx = b.x - p.x;
+      const dy = b.y - p.y;
+      const dist = Math.hypot(dx, dy);
+      const minDist = PLAYER_RADIUS + BALL_RADIUS + 2; // slightly fat barrier
+
+      if (dist > 0 && dist < minDist) {
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const overlap = minDist - dist;
+
+        // push ball out away from player
+        b.x += nx * overlap;
+        b.y += ny * overlap;
+
+        // give ball some velocity away from player (based on player speed)
+        const PUSH = 1.2;
+        const pvx = p.vx || 0;
+        const pvy = p.vy || 0;
+        b.vx += nx * (PUSH + Math.abs(pvx) * 0.3);
+        b.vy += ny * (PUSH + Math.abs(pvy) * 0.3);
+      }
+    }
+
     // bump
     if (p.input.bump && p.bumpCooldown <= 0) {
       for (const other of Object.values(room.players)) {
@@ -474,103 +504,65 @@ function tryKickBall(room, p) {
   }
 }
 
+// 🟡 simplified: ball only handles its own movement, walls, and goals
 function updateBall(room, dt) {
   const b = room.ball;
   const friction = 0.985;
 
-  // We'll move the ball in smaller steps this frame
-  const STEPS = 8;              // you can try 6 or 10 if you want
-  let vx = b.vx;
-  let vy = b.vy;
+  b.x += b.vx;
+  b.y += b.vy;
+
+  b.vx *= friction;
+  b.vy *= friction;
+
+  if (Math.abs(b.vx) < 0.02) b.vx = 0;
+  if (Math.abs(b.vy) < 0.02) b.vy = 0;
 
   const goalTop = FIELD_HEIGHT * 0.3;
   const goalBottom = FIELD_HEIGHT * 0.7;
 
-  for (let i = 0; i < STEPS; i++) {
-    // ---- move a small step ----
-    b.x += vx / STEPS;
-    b.y += vy / STEPS;
+  // top / bottom walls
+  if (b.y < BALL_RADIUS) {
+    b.y = BALL_RADIUS;
+    b.vy *= -0.8;
+  }
+  if (b.y > FIELD_HEIGHT - BALL_RADIUS) {
+    b.y = FIELD_HEIGHT - BALL_RADIUS;
+    b.vy *= -0.8;
+  }
 
-    // ---- top / bottom walls ----
-    if (b.y < BALL_RADIUS) {
-      b.y = BALL_RADIUS;
-      vy *= -0.8;
-    }
-    if (b.y > FIELD_HEIGHT - BALL_RADIUS) {
-      b.y = FIELD_HEIGHT - BALL_RADIUS;
-      vy *= -0.8;
-    }
-
-    // ---- LEFT side ----
-    if (b.x < BALL_RADIUS) {
-      if (b.y > goalTop && b.y < goalBottom) {
-        const scoringTeam = room.secondHalf ? "blue" : "red";
-        room.score[scoringTeam] += 1;
-        newEvent(room, { type: "goal", team: scoringTeam });
-        resetPlayersPositions(room);
-        resetBall(room);
-        pauseFor(room, 3);
-        return;
-      } else {
-        b.x = BALL_RADIUS;
-        vx *= -0.8;
-      }
-    }
-
-    // ---- RIGHT side ----
-    if (b.x > FIELD_WIDTH - BALL_RADIUS) {
-      if (b.y > goalTop && b.y < goalBottom) {
-        const scoringTeam = room.secondHalf ? "red" : "blue";
-        room.score[scoringTeam] += 1;
-        newEvent(room, { type: "goal", team: scoringTeam });
-        resetPlayersPositions(room);
-        resetBall(room);
-        pauseFor(room, 3);
-        return;
-      } else {
-        b.x = FIELD_WIDTH - BALL_RADIUS;
-        vx *= -0.8;
-      }
-    }
-
-    // ---- collision with players (now checked every tiny step) ----
-    for (const p of Object.values(room.players)) {
-      const dx = b.x - p.x;
-      const dy = b.y - p.y;
-      const dist = Math.hypot(dx, dy);
-      const minDist = PLAYER_RADIUS + BALL_RADIUS + 3;
-
-      if (dist > 0 && dist < minDist) {
-        const overlap = minDist - dist;
-        const nx = dx / dist;
-        const ny = dy / dist;
-
-        // push ball out of player
-        b.x += nx * overlap;
-        b.y += ny * overlap;
-
-        // bounce, influenced by player velocity
-        const pvx = p.vx || 0;
-        const pvy = p.vy || 0;
-
-        vx += nx * (1.4 + Math.abs(pvx) * 0.25);
-        vy += ny * (1.4 + Math.abs(pvy) * 0.25);
-      }
+  // LEFT side
+  if (b.x < BALL_RADIUS) {
+    if (b.y > goalTop && b.y < goalBottom) {
+      const scoringTeam = room.secondHalf ? "blue" : "red";
+      room.score[scoringTeam] += 1;
+      newEvent(room, { type: "goal", team: scoringTeam });
+      resetPlayersPositions(room);
+      resetBall(room);
+      pauseFor(room, 3);
+      return;
+    } else {
+      b.x = BALL_RADIUS;
+      b.vx *= -0.8;
     }
   }
 
-  // ---- after all sub-steps, apply friction once ----
-  vx *= friction;
-  vy *= friction;
-
-  if (Math.abs(vx) < 0.02) vx = 0;
-  if (Math.abs(vy) < 0.02) vy = 0;
-
-  b.vx = vx;
-  b.vy = vy;
+  // RIGHT side
+  if (b.x > FIELD_WIDTH - BALL_RADIUS) {
+    if (b.y > goalTop && b.y < goalBottom) {
+      const scoringTeam = room.secondHalf ? "red" : "blue";
+      room.score[scoringTeam] += 1;
+      newEvent(room, { type: "goal", team: scoringTeam });
+      resetPlayersPositions(room);
+      resetBall(room);
+      pauseFor(room, 3);
+      return;
+    } else {
+      b.x = FIELD_WIDTH - BALL_RADIUS;
+      b.vx *= -0.8;
+    }
+  }
 }
-
-
 
 // Global loop over all rooms
 setInterval(() => {
@@ -581,6 +573,6 @@ setInterval(() => {
 
 const PORT = process.env.PORT || 3000;
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
 });
