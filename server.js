@@ -478,15 +478,22 @@ function updateBall(room, dt) {
   const b = room.ball;
   const friction = 0.985;
 
+  // 🔹 Remember previous position (for sweep collision)
+  const prevX = b.x;
+  const prevY = b.y;
+
+  // Integrate position
   b.x += b.vx;
   b.y += b.vy;
 
+  // Friction
   b.vx *= friction;
   b.vy *= friction;
 
   if (Math.abs(b.vx) < 0.02) b.vx = 0;
   if (Math.abs(b.vy) < 0.02) b.vy = 0;
 
+  // Top / bottom walls
   if (b.y < BALL_RADIUS) {
     b.y = BALL_RADIUS;
     b.vy *= -0.8;
@@ -531,25 +538,41 @@ function updateBall(room, dt) {
     }
   }
 
-  // collision with players
+  // 🔥 collision with players (swept so fast balls don't pass through)
   for (const p of Object.values(room.players)) {
-    const dx = b.x - p.x;
-    const dy = b.y - p.y;
-    const dist = Math.hypot(dx, dy);
-    const minDist = PLAYER_RADIUS + BALL_RADIUS + 3;
-    if (dist > 0 && dist < minDist) {
-      const overlap = minDist - dist;
-      const nx = dx / dist;
-      const ny = dy / dist;
+    const steps = 4; // more steps = safer, 4 is enough
 
-      b.x += nx * overlap;
-      b.y += ny * overlap;
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps;
 
-      b.vx += nx * (1.4 + Math.abs(p.vx) * 0.25);
-      b.vy += ny * (1.4 + Math.abs(p.vy) * 0.25);
+      // position of ball along this frame's path
+      const sx = prevX + (b.x - prevX) * t;
+      const sy = prevY + (b.y - prevY) * t;
+
+      const dx = sx - p.x;
+      const dy = sy - p.y;
+      const dist = Math.hypot(dx, dy);
+      const minDist = PLAYER_RADIUS + BALL_RADIUS + 3;
+
+      if (dist > 0 && dist < minDist) {
+        const nx = dx / dist;
+        const ny = dy / dist;
+
+        // snap ball just outside player
+        b.x = p.x + nx * minDist;
+        b.y = p.y + ny * minDist;
+
+        // stronger bounce, influenced by player velocity a bit
+        b.vx += nx * (1.6 + Math.abs(p.vx || 0) * 0.35);
+        b.vy += ny * (1.6 + Math.abs(p.vy || 0) * 0.35);
+
+        // done with this player
+        break;
+      }
     }
   }
 }
+
 
 // Global loop over all rooms
 setInterval(() => {
