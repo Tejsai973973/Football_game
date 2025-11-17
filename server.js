@@ -478,7 +478,7 @@ function updateBall(room, dt) {
   const b = room.ball;
   const friction = 0.985;
 
-  // 🔹 Remember previous position (for sweep collision)
+  // ✅ Remember previous position for swept collision
   const prevX = b.x;
   const prevY = b.y;
 
@@ -493,7 +493,7 @@ function updateBall(room, dt) {
   if (Math.abs(b.vx) < 0.02) b.vx = 0;
   if (Math.abs(b.vy) < 0.02) b.vy = 0;
 
-  // Top / bottom walls
+  // TOP / BOTTOM walls
   if (b.y < BALL_RADIUS) {
     b.y = BALL_RADIUS;
     b.vy *= -0.8;
@@ -538,37 +538,54 @@ function updateBall(room, dt) {
     }
   }
 
-  // 🔥 collision with players (swept so fast balls don't pass through)
+  // 🔥 collision with players (proper swept test)
   for (const p of Object.values(room.players)) {
-    const steps = 4; // more steps = safer, 4 is enough
+    // segment from previous ball position -> current
+    const ax = prevX;
+    const ay = prevY;
+    const bx = b.x;
+    const by = b.y;
 
-    for (let s = 1; s <= steps; s++) {
-      const t = s / steps;
+    const abx = bx - ax;
+    const aby = by - ay;
+    const abLen2 = abx * abx + aby * aby;
 
-      // position of ball along this frame's path
-      const sx = prevX + (b.x - prevX) * t;
-      const sy = prevY + (b.y - prevY) * t;
+    // if ball basically didn't move, fall back to simple check
+    let closestX, closestY;
+    if (abLen2 < 1e-6) {
+      closestX = b.x;
+      closestY = b.y;
+    } else {
+      // projection of player onto ball path segment
+      const apx = p.x - ax;
+      const apy = p.y - ay;
+      let t = (apx * abx + apy * aby) / abLen2;
+      if (t < 0) t = 0;
+      if (t > 1) t = 1;
 
-      const dx = sx - p.x;
-      const dy = sy - p.y;
-      const dist = Math.hypot(dx, dy);
-      const minDist = PLAYER_RADIUS + BALL_RADIUS + 3;
+      closestX = ax + abx * t;
+      closestY = ay + aby * t;
+    }
 
-      if (dist > 0 && dist < minDist) {
-        const nx = dx / dist;
-        const ny = dy / dist;
+    const dx = closestX - p.x;
+    const dy = closestY - p.y;
+    const dist = Math.hypot(dx, dy);
+    const minDist = PLAYER_RADIUS + BALL_RADIUS + 3;
 
-        // snap ball just outside player
-        b.x = p.x + nx * minDist;
-        b.y = p.y + ny * minDist;
+    if (dist > 0 && dist < minDist) {
+      const nx = dx / dist;
+      const ny = dy / dist;
 
-        // stronger bounce, influenced by player velocity a bit
-        b.vx += nx * (1.6 + Math.abs(p.vx || 0) * 0.35);
-        b.vy += ny * (1.6 + Math.abs(p.vy || 0) * 0.35);
+      // snap ball just outside the player, along the collision normal
+      b.x = p.x + nx * minDist;
+      b.y = p.y + ny * minDist;
 
-        // done with this player
-        break;
-      }
+      // bounce; add a bit of player velocity influence if present
+      const pvx = p.vx || 0;
+      const pvy = p.vy || 0;
+
+      b.vx += nx * (1.6 + Math.abs(pvx) * 0.35);
+      b.vy += ny * (1.6 + Math.abs(pvy) * 0.35);
     }
   }
 }
