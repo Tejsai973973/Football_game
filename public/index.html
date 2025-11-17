@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>1v1 Football Arena</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    :root {
+      --bg: #020617;
+      --bg-soft: #020617;
+      --accent: #22c55e;
+      --accent-soft: rgba(34, 197, 94, 0.25);
+      --muted: #9ca3af;
+      --blue: #3b82f6;
+      --red: #f97373;
+      --card: rgba(15, 23, 42, 0.96);
+      --border-subtle: rgba(148, 163, 184, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    /* Lock page to viewport and stop scroll */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overscroll-behavior: none;   /* no pull-to-refresh */
+      touch-action: none;          /* no scroll/zoom swipes */
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+      background:
+        radial-gradient(circle at top, #0b1120 0%, #020617 40%, #000 100%);
+      color: #e5e7eb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Centered app shell */
+    .app-shell {
+      width: 100%;
+      max-width: 1040px;
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+    }
+
+    .frame {
+      width: 100%;
+      max-height: 100%;
+      border-radius: 24px;
+      padding: 18px 18px 20px;
+      background: radial-gradient(circle at top left, rgba(56, 189, 248, 0.08), transparent 55%),
+                  radial-gradient(circle at top right, rgba(34, 197, 94, 0.08), transparent 55%),
+                  var(--card);
+      box-shadow:
+        0 24px 80px rgba(15, 23, 42, 0.9),
+        0 0 0 1px rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* subtle corner glow */
+    .frame::before {
+      content: "";
+      position: absolute;
+      inset: -40%;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(56, 189, 248, 0.09), transparent 50%),
+        radial-gradient(circle at 100% 0%, rgba(34, 197, 94, 0.08), transparent 55%);
+      opacity: 0.9;
+      pointer-events: none;
+    }
+
+    .frame-inner {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      max-height: 100%;
+    }
+
+    .screen {
+      display: none;
+    }
+    .screen.active {
+      display: block;
+    }
+
+    header.app-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    .title-block h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0.03em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .title-block h1 span.logo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      background: radial-gradient(circle at 30% 20%, #22c55e, #16a34a);
+      box-shadow: 0 0 18px rgba(34, 197, 94, 0.6);
+      font-size: 17px;
+    }
+
+    .title-block h1 span.text {
+      background: linear-gradient(to right, #f9fafb, #bbf7d0);
+      -webkit-background-clip: text;
+      color: transparent;
+    }
+
+    .subtitle {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .header-pill {
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      background: radial-gradient(circle at top, rgba(248, 250, 252, 0.06), transparent 60%);
+      font-size: 11px;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .header-pill span.dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: radial-gradient(circle at 30% 20%, #22c55e, #16a34a);
+      box-shadow: 0 0 10px rgba(34, 197, 94, 0.7);
+    }
+
+    .content {
+      margin-top: 4px;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* WELCOME + RULES card layout */
+    .card-narrow {
+      max-width: 520px;
+      margin: 0 auto;
+      border-radius: 18px;
+      padding: 16px 18px 18px;
+      background: radial-gradient(circle at top left, rgba(15, 23, 42, 0.94), rgba(15, 23, 42, 0.98));
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.9);
+    }
+
+    .section-title {
+      font-size: 16px;
+      margin: 0 0 10px;
+    }
+
+    .field {
+      margin-bottom: 12px;
+    }
+    .field label {
+      display: block;
+      font-size: 12px;
+      margin-bottom: 4px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .field input {
+      width: 100%;
+      padding: 9px 11px;
+      border-radius: 10px;
+      border: 1px solid rgba(51, 65, 85, 0.9);
+      background: radial-gradient(circle at top, #020617, #020617);
+      color: #e5e7eb;
+      box-sizing: border-box;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+    .field input::placeholder {
+      color: #6b7280;
+    }
+    .field input:focus {
+      border-color: rgba(56, 189, 248, 0.8);
+      box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.5);
+      background: radial-gradient(circle at top, #020617, #020617);
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .btn {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      border: none;
+      padding: 8px 18px;
+      border-radius: 999px;
+      color: white;
+      cursor: pointer;
+      font-size: 13px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 10px 30px rgba(37, 99, 235, 0.45);
+      border: 1px solid rgba(191, 219, 254, 0.2);
+      transition: transform 0.08s ease, box-shadow 0.08s ease, opacity 0.08s ease;
+      white-space: nowrap;
+    }
+    .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 14px 40px rgba(37, 99, 235, 0.6);
+    }
+    .btn.secondary {
+      background: radial-gradient(circle at top, #020617, #020617);
+      border: 1px solid rgba(148, 163, 184, 0.55);
+      box-shadow: 0 10px 25px rgba(15, 23, 42, 0.85);
+    }
+    .btn.secondary:hover {
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.95);
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .fullscreen-btn {
+      font-size: 11px;
+      padding: 5px 10px;
+    }
+
+    .hint {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .error-text {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #f97373;
+    }
+
+    .rules-list {
+      margin: 0 0 8px;
+      padding-left: 18px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .rules-list li {
+      margin-bottom: 4px;
+    }
+
+    /* GAME SCREEN LAYOUT */
+    #gameContainer {
+      background: radial-gradient(circle at top, rgba(15, 23, 42, 0.98), rgba(15, 23, 42, 0.99));
+      border-radius: 22px;
+      padding: 10px 12px 12px;
+      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      max-height: 100%;
+    }
+
+    #topBar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    #topBar-left {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    #topBar-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .top-label {
+      font-size: 12px;
+      color: #e5e7eb;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid #4b5563;
+      color: #e5e7eb;
+      background: radial-gradient(circle at top, #020617, #020617);
+    }
+
+    .tag.role-player {
+      border-color: rgba(34, 197, 94, 0.9);
+      color: #bbf7d0;
+    }
+
+    #supportInfo {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+    }
+
+    #hud {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      margin-bottom: 8px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    #scoreBox {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-weight: 600;
+    }
+
+    #scoreBox span {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+
+    #bluePlayerName {
+      color: var(--blue);
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.05em;
+    }
+
+    #redPlayerName {
+      color: var(--red);
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.05em;
+    }
+
+    #scoreBlue,
+    #scoreRed {
+      font-size: 18px;
+    }
+
+    #timer {
+      font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+      font-size: 16px;
+      letter-spacing: 0.16em;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      background: radial-gradient(circle at top, #020617, #020617);
+    }
+
+    #gameCanvas {
+      display: block;
+      border-radius: 18px;
+      background: #065f46;
+
+  /* responsive sizing */
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+
+  /* ✅ NEW: never let the canvas be so tall that it gets cut */
+      max-height: calc(100vh - 260px); /* tweak 260 if needed */
+
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.95);
+    }
+
+
+    #supportControls {
+      margin-top: 8px;
+      font-size: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      justify-content: center;
+    }
+
+    #supportPrompt {
+      color: var(--muted);
+    }
+
+    #statusText {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #e5e7eb;
+      text-align: center;
+    }
+
+    .btn.support-btn {
+      padding: 4px 10px;
+      font-size: 11px;
+    }
+
+    /* Mobile controls (shown only on mobile via body.is-mobile) */
+    #mobileControls {
+      margin-top: 8px;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: nowrap;
+    }
+    body.is-mobile #mobileControls {
+      display: flex;
+    }
+
+    #dpad {
+      display: grid;
+      grid-template-columns: 40px 40px 40px;
+      grid-template-rows: 40px 40px 40px;
+      gap: 6px;
+      align-items: center;
+      justify-items: center;
+    }
+
+    .dpad-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.8);
+      background: radial-gradient(circle at top, #020617, #020617);
+      color: #e5e7eb;
+      font-size: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 8px 18px rgba(15, 23, 42, 0.9);
+      touch-action: none;
+    }
+    .dpad-btn.empty {
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    #mobileActions {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-end;
+      justify-content: flex-end;
+      flex: 1;
+    }
+
+    .action-btn {
+      padding: 6px 12px;
+      font-size: 11px;
+      min-width: 80px;
+      justify-content: center;
+    }
+
+    /* Score pop animation */
+    @keyframes scorePop {
+      0% { transform: scale(1); }
+      40% { transform: scale(1.25); }
+      100% { transform: scale(1); }
+    }
+    .score-pop {
+      animation: scorePop 0.4s ease-out;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .frame {
+        padding: 14px 12px 16px;
+        border-radius: 20px;
+      }
+      header.app-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .title-block h1 {
+        font-size: 21px;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .card-narrow {
+        padding: 14px 12px;
+      }
+      .btn-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .btn {
+        width: 100%;
+        justify-content: center;
+      }
+      #topBar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      #topBar-right {
+        justify-content: space-between;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app-shell">
+    <div class="frame">
+      <div class="frame-inner">
+
+        <header class="app-header">
+          <div class="title-block">
+            <h1>
+              <span class="logo">⚽</span>
+              <span class="text">1v1 Football Arena</span>
+            </h1>
+            <p class="subtitle">
+              Real-time browser football. Share your room ID and play a full match with a friend.
+            </p>
+          </div>
+          <div class="header-pill">
+            <span class="dot"></span>
+            <span>Live multiplayer • Node + Socket.IO</span>
+          </div>
+        </header>
+
+        <div class="content">
+
+          <!-- Screen 1: Let's Begin -->
+          <div id="screen-welcome" class="screen active">
+            <div class="card-narrow">
+              <h2 class="section-title">Let’s Begin</h2>
+
+              <div class="field">
+                <label>Your Name</label>
+                <input id="inputName" type="text" placeholder="e.g. Tej, Messi, CR7" />
+              </div>
+
+              <div class="field">
+                <label>Room ID (6-digit)</label>
+                <input id="inputRoomId" type="text" maxlength="6" placeholder="123456 or leave empty to auto-generate" />
+              </div>
+
+              <div class="btn-row">
+                <button id="btnCreateRoom" class="btn">
+                  Create Room
+                </button>
+                <button id="btnJoinRoom" class="btn secondary">
+                  Join Room
+                </button>
+              </div>
+
+              <p class="hint">
+                First two users in a room become
+                <b style="color:var(--blue);">BLUE</b> and
+                <b style="color:var(--red);">RED</b>.
+                Everyone else joins as a spectator.
+              </p>
+
+              <p id="welcomeError" class="error-text"></p>
+            </div>
+          </div>
+
+          <!-- Screen 2: Rules -->
+          <div id="screen-rules" class="screen">
+            <div class="card-narrow">
+              <h2 class="section-title">Rules & Controls</h2>
+
+              <ul class="rules-list">
+                <li>Match length: <b>3 minutes</b> (180s).</li>
+                <li>Half-time at <b>01:30</b>, sides swap.</li>
+                <li>After a goal, players and ball reset to midfield.</li>
+              </ul>
+
+              <h3 style="font-size:14px;margin:10px 0 6px;">Controls (Players)</h3>
+              <ul class="rules-list">
+                <li>Move: <b>WASD</b> or <b>Arrow Keys</b></li>
+                <li>Kick / Hard touch: <b>SPACE</b></li>
+                <li>Sprint (uses stamina bar): <b>SHIFT</b></li>
+                <li>Shoulder bump (close to opponent): <b>F</b></li>
+                <li>Restart match (debug / local): <b>R</b></li>
+              </ul>
+
+              <h3 style="font-size:14px;margin:10px 0 6px;">Spectators</h3>
+              <ul class="rules-list">
+                <li>Join any room once 2 players are inside.</li>
+                <li>Pick BLUE or RED to support and watch the match live.</li>
+              </ul>
+
+              <div class="btn-row" style="margin-top:10px;">
+                <button id="btnGoToGame" class="btn">
+                  Continue to Match
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Screen 3: Game -->
+          <div id="screen-game" class="screen">
+            <div id="gameContainer">
+              <div id="topBar">
+                <div id="topBar-left">
+                  <span class="top-label">Room: <b id="roomIdLabel">-</b></span>
+                  <span class="tag" id="roleLabel">ROLE</span>
+                  <span class="tag">You: <span id="playerNameLabel">-</span></span>
+                </div>
+                <div id="topBar-right">
+                  <div id="supportInfo">
+                    <span id="supportStatus">Fans: Blue 0 | Red 0</span>
+                  </div>
+                  <button id="btnFullscreen" class="btn secondary fullscreen-btn">
+                    ⛶ Fullscreen
+                  </button>
+                </div>
+              </div>
+
+              <div id="hud">
+                <div id="scoreBox">
+                  <span id="blueScoreWrapper">
+                    🔵 <span id="bluePlayerName">BLUE</span>
+                    <b id="scoreBlue">0</b>
+                  </span>
+
+                  <span id="redScoreWrapper">
+                    🔴 <b id="scoreRed">0</b>
+                    <span id="redPlayerName">RED</span>
+                  </span>
+                </div>
+
+                <div>
+                  <span>⏱ <b id="timer">03:00</b></span>
+                </div>
+              </div>
+
+              <canvas id="gameCanvas" width="800" height="450"></canvas>
+
+              <!-- Mobile joystick & buttons (shown only on mobile by JS + CSS) -->
+              <div id="mobileControls">
+                <div id="dpad">
+                  <button class="dpad-btn empty"></button>
+                  <button class="dpad-btn" data-dir="up">▲</button>
+                  <button class="dpad-btn empty"></button>
+
+                  <button class="dpad-btn" data-dir="left">◀</button>
+                  <button class="dpad-btn" data-dir="down">▼</button>
+                  <button class="dpad-btn" data-dir="right">▶</button>
+
+                  <button class="dpad-btn empty"></button>
+                  <button class="dpad-btn empty"></button>
+                  <button class="dpad-btn empty"></button>
+                </div>
+
+                <div id="mobileActions">
+                  <button id="btnMobileKick" class="btn action-btn">Kick</button>
+                  <button id="btnMobileSprint" class="btn secondary action-btn">Sprint</button>
+                  <button id="btnMobileBump" class="btn secondary action-btn">Bump</button>
+                </div>
+              </div>
+
+              <div id="supportControls">
+                <span id="supportPrompt">
+                  Spectator: choose a side to support:
+                </span>
+                <button
+                  id="btnSupportBlue"
+                  class="btn secondary support-btn">
+                  Support BLUE
+                </button>
+                <button
+                  id="btnSupportRed"
+                  class="btn secondary support-btn">
+                  Support RED
+                </button>
+              </div>
+
+              <div id="statusText">Connecting…</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>
