@@ -538,54 +538,34 @@ function updateBall(room, dt) {
     }
   }
 
-  // 🔥 collision with players (proper swept test)
+  // 🔥 ULTIMATE collision with players - NO GHOSTING
   for (const p of Object.values(room.players)) {
-    // segment from previous ball position -> current
-    const ax = prevX;
-    const ay = prevY;
-    const bx = b.x;
-    const by = b.y;
-
-    const abx = bx - ax;
-    const aby = by - ay;
-    const abLen2 = abx * abx + aby * aby;
-
-    // if ball basically didn't move, fall back to simple check
-    let closestX, closestY;
-    if (abLen2 < 1e-6) {
-      closestX = b.x;
-      closestY = b.y;
-    } else {
-      // projection of player onto ball path segment
-      const apx = p.x - ax;
-      const apy = p.y - ay;
-      let t = (apx * abx + apy * aby) / abLen2;
-      if (t < 0) t = 0;
-      if (t > 1) t = 1;
-
-      closestX = ax + abx * t;
-      closestY = ay + aby * t;
-    }
-
-    const dx = closestX - p.x;
-    const dy = closestY - p.y;
+    const dx = b.x - p.x;
+    const dy = b.y - p.y;
     const dist = Math.hypot(dx, dy);
-    const minDist = PLAYER_RADIUS + BALL_RADIUS + 3;
-
-    if (dist > 0 && dist < minDist) {
-      const nx = dx / dist;
-      const ny = dy / dist;
-
-      // snap ball just outside the player, along the collision normal
-      b.x = p.x + nx * minDist;
-      b.y = p.y + ny * minDist;
-
-      // bounce; add a bit of player velocity influence if present
-      const pvx = p.vx || 0;
-      const pvy = p.vy || 0;
-
-      b.vx += nx * (1.6 + Math.abs(pvx) * 0.35);
-      b.vy += ny * (1.6 + Math.abs(pvy) * 0.35);
+    const minDist = PLAYER_RADIUS + BALL_RADIUS;
+    
+    if (dist < minDist) {
+      // IMMEDIATE collision response - no fancy math, just push out
+      const overlap = minDist - dist;
+      const nx = dx / (dist || 1);
+      const ny = dy / (dist || 1);
+      
+      // Force ball outside player
+      b.x = p.x + nx * minDist * 1.01;
+      b.y = p.y + ny * minDist * 1.01;
+      
+      // Strong bounce with player velocity influence
+      const power = 2.0 + (Math.abs(p.vx) + Math.abs(p.vy)) * 0.4;
+      b.vx += nx * power;
+      b.vy += ny * power;
+      
+      // Limit maximum speed
+      const speed = Math.hypot(b.vx, b.vy);
+      if (speed > 15) {
+        b.vx = (b.vx / speed) * 15;
+        b.vy = (b.vy / speed) * 15;
+      }
     }
   }
 }
