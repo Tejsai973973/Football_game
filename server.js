@@ -21,15 +21,6 @@ const BALL_RADIUS = 8;
 const BUMP_RANGE = PLAYER_RADIUS * 2.2;
 
 // ---- Rooms ----
-// room: {
-//   id,
-//   players: { socketId -> playerObj },
-//   spectators: { socketId -> spectatorObj },
-//   ball, score, matchTime, running,
-//   halfTimeTriggered, secondHalf,
-//   lastEvent, eventId,
-//   lastTickTime
-// }
 const rooms = new Map();
 
 // ---- Room helpers ----
@@ -406,10 +397,7 @@ function updatePlayers(room, dt) {
     if (p.y > FIELD_HEIGHT - PLAYER_RADIUS)
       p.y = FIELD_HEIGHT - PLAYER_RADIUS;
 
-    // ❌ no ball collision here (no attraction, no magnet)
-    // only bump & kick below
-
-    // bump
+    // bump (unchanged)
     if (p.input.bump && p.bumpCooldown <= 0) {
       for (const other of Object.values(room.players)) {
         if (other.id === p.id || other.team === p.team) continue;
@@ -482,6 +470,7 @@ function tryKickBall(room, p) {
 }
 
 // 🟡 Ball: movement, walls, goals, and pure collision with players (no attraction)
+// and keep movement "free" like before (no crazy bounce, only blocking inward)
 function updateBall(room, dt) {
   const b = room.ball;
   const friction = 0.985;
@@ -494,7 +483,7 @@ function updateBall(room, dt) {
   b.x += b.vx;
   b.y += b.vy;
 
-  // Apply friction
+  // Apply friction (same as before)
   b.vx *= friction;
   b.vy *= friction;
 
@@ -547,7 +536,7 @@ function updateBall(room, dt) {
     }
   }
 
-  // ===== Pure collision with players (no attraction) =====
+  // ===== Pure collision with players (no attraction, keep free movement) =====
   const moveX = b.x - oldX;
   const moveY = b.y - oldY;
   const moveLenSq = moveX * moveX + moveY * moveY;
@@ -571,10 +560,12 @@ function updateBall(room, dt) {
         b.x += nx0 * overlap0;
         b.y += ny0 * overlap0;
 
-        // Simple bounce: reflect velocity around normal
+        // Remove only inward velocity (keep tangential, so it moves "freely")
         const vDotN0 = b.vx * nx0 + b.vy * ny0;
-        b.vx = b.vx - 2 * vDotN0 * nx0;
-        b.vy = b.vy - 2 * vDotN0 * ny0;
+        if (vDotN0 < 0) {
+          b.vx -= vDotN0 * nx0;
+          b.vy -= vDotN0 * ny0;
+        }
       }
       continue;
     }
@@ -608,10 +599,13 @@ function updateBall(room, dt) {
       b.x = p.x + nx * R;
       b.y = p.y + ny * R;
 
-      // Reflect velocity (pure bounce)
+      // Remove only inward component of velocity
+      // -> ball won't go through player, but still moves freely along tangent
       const vDotN = b.vx * nx + b.vy * ny;
-      b.vx = b.vx - 2 * vDotN * nx;
-      b.vy = b.vy - 2 * vDotN * ny;
+      if (vDotN < 0) {
+        b.vx -= vDotN * nx;
+        b.vy -= vDotN * ny;
+      }
     }
   }
 }
