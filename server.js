@@ -406,31 +406,8 @@ function updatePlayers(room, dt) {
     if (p.y > FIELD_HEIGHT - PLAYER_RADIUS)
       p.y = FIELD_HEIGHT - PLAYER_RADIUS;
 
-    // 🔥 collide player with ball (prevents phasing when sprinting)
-    const b = room.ball;
-    {
-      const dx = b.x - p.x;
-      const dy = b.y - p.y;
-      const dist = Math.hypot(dx, dy);
-      const minDist = PLAYER_RADIUS + BALL_RADIUS + 2; // slightly fat barrier
-
-      if (dist > 0 && dist < minDist) {
-        const nx = dx / dist;
-        const ny = dy / dist;
-        const overlap = minDist - dist;
-
-        // push ball out away from player
-        b.x += nx * overlap;
-        b.y += ny * overlap;
-
-        // give ball some velocity away from player (based on player speed)
-        const PUSH = 1.2;
-        const pvx = p.vx || 0;
-        const pvy = p.vy || 0;
-        b.vx += nx * (PUSH + Math.abs(pvx) * 0.3);
-        b.vy += ny * (PUSH + Math.abs(pvy) * 0.3);
-      }
-    }
+    // ❌ no ball collision here (no attraction, no magnet)
+    // only bump & kick below
 
     // bump
     if (p.input.bump && p.bumpCooldown <= 0) {
@@ -504,24 +481,27 @@ function tryKickBall(room, p) {
   }
 }
 
-// 🟡 simplified: ball only handles its own movement, walls, and goals
+// 🟡 Ball: movement, walls, goals, and pure collision with players (no attraction)
 function updateBall(room, dt) {
   const b = room.ball;
   const friction = 0.985;
 
+  // Previous position for continuous collision
+  const oldX = b.x;
+  const oldY = b.y;
+
+  // Integrate velocity
   b.x += b.vx;
   b.y += b.vy;
 
+  // Apply friction
   b.vx *= friction;
   b.vy *= friction;
 
   if (Math.abs(b.vx) < 0.02) b.vx = 0;
   if (Math.abs(b.vy) < 0.02) b.vy = 0;
 
-  const goalTop = FIELD_HEIGHT * 0.3;
-  const goalBottom = FIELD_HEIGHT * 0.7;
-
-  // top / bottom walls
+  // --- Wall bounce (top/bottom) ---
   if (b.y < BALL_RADIUS) {
     b.y = BALL_RADIUS;
     b.vy *= -0.8;
@@ -530,6 +510,10 @@ function updateBall(room, dt) {
     b.y = FIELD_HEIGHT - BALL_RADIUS;
     b.vy *= -0.8;
   }
+
+  // --- Goals / side walls ---
+  const goalTop = FIELD_HEIGHT * 0.3;
+  const goalBottom = FIELD_HEIGHT * 0.7;
 
   // LEFT side
   if (b.x < BALL_RADIUS) {
@@ -560,6 +544,74 @@ function updateBall(room, dt) {
     } else {
       b.x = FIELD_WIDTH - BALL_RADIUS;
       b.vx *= -0.8;
+    }
+  }
+
+  // ===== Pure collision with players (no attraction) =====
+  const moveX = b.x - oldX;
+  const moveY = b.y - oldY;
+  const moveLenSq = moveX * moveX + moveY * moveY;
+  const EPS = 1e-6;
+
+  for (const p of Object.values(room.players)) {
+    // Exact touch radius: player circle + ball circle
+    const R = PLAYER_RADIUS + BALL_RADIUS;
+
+    if (moveLenSq < EPS) {
+      // Ball barely moved this frame: simple overlap check
+      const dx0 = b.x - p.x;
+      const dy0 = b.y - p.y;
+      const dist0 = Math.hypot(dx0, dy0);
+      if (dist0 > 0 && dist0 < R) {
+        const nx0 = dx0 / dist0;
+        const ny0 = dy0 / dist0;
+        const overlap0 = R - dist0;
+
+        // Push ball out
+        b.x += nx0 * overlap0;
+        b.y += ny0 * overlap0;
+
+        // Simple bounce: reflect velocity around normal
+        const vDotN0 = b.vx * nx0 + b.vy * ny0;
+        b.vx = b.vx - 2 * vDotN0 * nx0;
+        b.vy = b.vy - 2 * vDotN0 * ny0;
+      }
+      continue;
+    }
+
+    // Continuous segment-circle collision:
+    // closest point from ball path [old -> new] to player's center
+    const segX = moveX;
+    const segY = moveY;
+    const toPlayerX = p.x - oldX;
+    const toPlayerY = p.y - oldY;
+
+    let t = (toPlayerX * segX + toPlayerY * segY) / moveLenSq;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+
+    const closestX = oldX + segX * t;
+    const closestY = oldY + segY * t;
+
+    const dx = closestX - p.x;
+    const dy = closestY - p.y;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist < R) {
+      // Real intersection: ball crossed into player circle this frame
+
+      // Normal from player to collision point
+      const nx = dist === 0 ? 1 : dx / dist;
+      const ny = dist === 0 ? 0 : dy / dist;
+
+      // Put ball exactly on the surface: no overlap, no pull-in
+      b.x = p.x + nx * R;
+      b.y = p.y + ny * R;
+
+      // Reflect velocity (pure bounce)
+      const vDotN = b.vx * nx + b.vy * ny;
+      b.vx = b.vx - 2 * vDotN * nx;
+      b.vy = b.vy - 2 * vDotN * ny;
     }
   }
 }
