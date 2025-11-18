@@ -130,12 +130,24 @@ io.on("connection", (socket) => {
   socket.data.name = "";
 
   socket.on("join_room", ({ roomId, name }) => {
+    // === SECURITY: Input validation ===
+    if (!name || typeof name !== "string") {
+      socket.emit("join_error", "Please enter your name.");
+      return;
+    }
+    
+    if (name.length > 20) {
+      socket.emit("join_error", "Name too long (max 20 characters)");
+      return;
+    }
+
     if (!roomId || typeof roomId !== "string") {
       socket.emit("join_error", "Invalid room ID.");
       return;
     }
-    if (!name || typeof name !== "string") {
-      socket.emit("join_error", "Please enter your name.");
+
+    if (!/^[a-zA-Z0-9]{1,20}$/.test(roomId)) {
+      socket.emit("join_error", "Invalid room ID format. Use only letters and numbers.");
       return;
     }
 
@@ -271,13 +283,6 @@ io.on("connection", (socket) => {
       room.matchTime = MATCH_DURATION;
       room.halfTimeTriggered = false;
       room.secondHalf = false;
-    }
-
-    if (
-      Object.keys(room.players).length === 0 &&
-      Object.keys(room.spectators).length === 0
-    ) {
-      rooms.delete(roomId);
     }
   });
 });
@@ -428,13 +433,11 @@ function updatePlayers(room, dt) {
       }
     }
 
-    // kick
-    if (p.input.kick) {
-      const now = Date.now();
-      if (now - p.lastKickTime > 300) {
-        tryKickBall(room, p);
-        p.lastKickTime = now;
-      }
+    // === ENHANCED KICK DETECTION ===
+    const now = Date.now();
+    if (p.input.kick && now - p.lastKickTime > 250) { // 250ms cooldown
+      tryKickBall(room, p);
+      p.lastKickTime = now;
     }
   }
 }
@@ -469,8 +472,7 @@ function tryKickBall(room, p) {
   }
 }
 
-// 🟡 Ball: movement, walls, goals, and pure collision with players (no attraction)
-// and keep movement "free" like before (no crazy bounce, only blocking inward)
+// === KEEP YOUR WORKING BALL PHYSICS ===
 function updateBall(room, dt) {
   const b = room.ball;
   const friction = 0.985;
@@ -606,6 +608,17 @@ setInterval(() => {
     gameLoopRoom(room);
   }
 }, 1000 / TICK_RATE);
+
+// === MEMORY LEAK PREVENTION ===
+setInterval(() => {
+  for (const [roomId, room] of rooms.entries()) {
+    if (Object.keys(room.players).length === 0 && 
+        Object.keys(room.spectators).length === 0) {
+      rooms.delete(roomId);
+      console.log(`Cleaned up empty room: ${roomId}`);
+    }
+  }
+}, 60000); // Clean every minute
 
 const PORT = process.env.PORT || 3000;
 

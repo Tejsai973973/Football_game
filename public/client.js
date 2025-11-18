@@ -150,6 +150,10 @@ let replayPathUntil = 0;
 let lastScore = { blue: 0, red: 0 };
 let introShownOnce = false;
 
+// === INPUT RATE LIMITING ===
+let lastInputTime = 0;
+const INPUT_THROTTLE = 50; // ms
+
 // ---------- Mobile detection ----------
 function isProbablyMobile() {
   const ua = navigator.userAgent || navigator.vendor || window.opera || "";
@@ -159,6 +163,19 @@ function isProbablyMobile() {
 if (isProbablyMobile()) {
   document.body.classList.add("is-mobile");
 }
+
+// ---------- Canvas Scaling (Responsive) ----------
+function resizeCanvas() {
+  const container = gameContainer;
+  const containerWidth = container.clientWidth;
+  const scale = Math.min(containerWidth / 800, 1);
+  
+  canvas.style.width = `${800 * scale}px`;
+  canvas.style.height = `${450 * scale}px`;
+}
+
+window.addEventListener('load', resizeCanvas);
+window.addEventListener('resize', resizeCanvas);
 
 // ---------- Screen helpers ----------
 function setScreen(name) {
@@ -231,173 +248,21 @@ btnFullscreen.onclick = () => {
   }
 };
 
-// ---------- Socket handlers ----------
-socket.on("join_error", (msg) => {
-  welcomeError.textContent = msg || "Failed to join room.";
-});
-
-socket.on("init", (data) => {
-  clientId = data.id;
-  myTeam = data.team;
-  myRole = data.role;
-  myName = data.name;
-  myRoomId = data.roomId;
-  field = data.field || field;
-  matchDuration = data.matchDuration || matchDuration;
-
-  roomIdLabel.textContent = myRoomId;
-  playerNameLabel.textContent = myName || "-";
-  roleLabel.textContent =
-    myRole === "player"
-      ? `PLAYER (${myTeam.toUpperCase()})`
-      : "SPECTATOR";
-
-  if (myRole === "player") {
-    roleLabel.classList.add("role-player");
-  } else {
-    roleLabel.classList.remove("role-player");
-  }
-
-  // 🔹 Spectators: see support UI + buttons
-  // 🔹 Players: support block hidden (they already know their side)
-  // Always show support UI (players + spectators)
-// Spectators actually use it, players can just ignore it
-  supportControls.style.display = "flex";
-
-
-  // Status text is visible for *everyone* (players + spectators)
-  statusText.textContent =
-    myRole === "player"
-      ? `Waiting for match to start...`
-      : `You are a spectator in Room ${myRoomId}. Choose a side to support.`;
-
-  setScreen("rules");
-});
-
-// State updates
-socket.on("state", (state) => {
-  latestState = state;
-
-  // Scores
-  scoreBlueEl.textContent = state.score.blue;
-  scoreRedEl.textContent = state.score.red;
-  timerEl.textContent = formatTime(state.matchTime);
-
-  // Player names for scoreboard
-  const bluePlayer = state.players.find((p) => p.team === "blue");
-  const redPlayer = state.players.find((p) => p.team === "red");
-  if (bluePlayerNameEl) {
-    bluePlayerNameEl.textContent = bluePlayer
-      ? bluePlayer.name || "BLUE"
-      : "BLUE";
-  }
-  if (redPlayerNameEl) {
-    redPlayerNameEl.textContent = redPlayer
-      ? redPlayer.name || "RED"
-      : "RED";
-  }
-
-  // Score pop animation
-  if (state.score.blue !== lastScore.blue) {
-    triggerScorePop("blue");
-  }
-  if (state.score.red !== lastScore.red) {
-    triggerScorePop("red");
-  }
-  lastScore = { ...state.score };
-
-  // Ball path history (for short replay)
-  const now = performance.now();
-  ballHistory.push({ x: state.ball.x, y: state.ball.y, t: now });
-  const cutoff = now - 3000;
-  while (ballHistory.length && ballHistory[0].t < cutoff) {
-    ballHistory.shift();
-  }
-
-  // Supporters
-  if (state.supporters) {
-    supportStatus.textContent = `Fans: Blue ${state.supporters.blue} | Red ${state.supporters.red}`;
-  }
-
-  handleEvents(state);
-
-  // 🔹 Status line that *everyone* sees
-  if (!state.running) {
-    if (state.matchTime <= 0) {
-      const { blue, red } = state.score;
-      if (blue > red) {
-        statusText.textContent = `FULL-TIME: BLUE wins ${blue} - ${red}`;
-      } else if (red > blue) {
-        statusText.textContent = `FULL-TIME: RED wins ${blue} - ${red}`;
-      } else {
-        statusText.textContent = `FULL-TIME: Draw ${blue} - ${red}`;
-      }
-    } else {
-      statusText.textContent = "Match paused or waiting for both players.";
-    }
-  } else {
-    const halfLabel =
-      state.matchTime > matchDuration / 2 ? "1st Half" : "2nd Half";
-    statusText.textContent = `Match running • ${halfLabel}`;
-  }
-});
-
-// Score pop helper
-function triggerScorePop(side) {
-  const el =
-    side === "blue" ? blueScoreWrapper : side === "red" ? redScoreWrapper : null;
-  if (!el) return;
-  el.classList.remove("score-pop");
-  void el.offsetWidth; // force reflow
-  el.classList.add("score-pop");
-  setTimeout(() => {
-    el.classList.remove("score-pop");
-  }, 400);
+// === MOBILE UX IMPROVEMENTS ===
+function addButtonFeedback(btn) {
+  btn.addEventListener('touchstart', () => {
+    btn.style.transform = 'scale(0.95)';
+    btn.style.opacity = '0.8';
+  });
+  
+  btn.addEventListener('touchend', () => {
+    btn.style.transform = 'scale(1)';
+    btn.style.opacity = '1';
+  });
 }
 
-// Events: kickoff / goal / halftime / fulltime
-function handleEvents(state) {
-  if (!state.lastEvent || !state.eventId) return;
-  if (state.eventId === lastSeenEventId) return;
-  lastSeenEventId = state.eventId;
-
-  ensureAudio();
-  const ev = state.lastEvent;
-
-  if (ev.type === "kickoff") {
-    const bluePlayer = state.players.find((p) => p.team === "blue");
-    const redPlayer = state.players.find((p) => p.team === "red");
-    const blueName = bluePlayer ? bluePlayer.name || "BLUE" : "BLUE";
-    const redName = redPlayer ? redPlayer.name || "RED" : "RED";
-
-    overlayText = `${blueName} vs ${redName}`;
-    overlayUntil = Date.now() + (introShownOnce ? 1500 : 2500);
-    introShownOnce = true;
-    playWhistle(false);
-  } else if (ev.type === "goal") {
-    const scorer = state.players.find((p) => p.team === ev.team);
-    const scorerName = scorer
-      ? scorer.name || ev.team.toUpperCase()
-      : ev.team.toUpperCase();
-    overlayText = `GOAL!!! ${scorerName}`;
-    overlayUntil = Date.now() + 3000;
-    replayPathUntil = Date.now() + 2500;
-    playCrowdCheer();
-    playWhistle(false);
-  } else if (ev.type === "halftime") {
-    overlayText = "HALF-TIME";
-    overlayUntil = Date.now() + 3000;
-    playWhistle(true);
-  } else if (ev.type === "fulltime") {
-    if (ev.winner === "draw") {
-      overlayText = "FULL-TIME • DRAW";
-    } else {
-      overlayText = `FULL-TIME • ${ev.winner.toUpperCase()} WINS!`;
-    }
-    overlayUntil = Date.now() + 4000;
-    playWhistle(true);
-  }
-}
+// Apply to all mobile buttons
+document.querySelectorAll('.dpad-btn, .action-btn').forEach(addButtonFeedback);
 
 // ---------- Keyboard input ----------
 window.addEventListener("keydown", (e) => {
@@ -518,9 +383,202 @@ if (btnMobileBump) {
   btnMobileBump.addEventListener("click", doBump);
 }
 
-// Send input state
+// === INPUT RATE LIMITING ===
 function sendInput() {
+  const now = Date.now();
+  if (now - lastInputTime < INPUT_THROTTLE) return;
+  
+  lastInputTime = now;
   socket.emit("input", keys);
+}
+
+// === MEMORY LEAK PREVENTION ===
+window.addEventListener('beforeunload', () => {
+  socket.disconnect();
+});
+
+// ---------- Socket handlers ----------
+socket.on("join_error", (msg) => {
+  welcomeError.textContent = msg || "Failed to join room.";
+});
+
+// === ERROR HANDLING & RECONNECTION ===
+socket.on("disconnect", (reason) => {
+  statusText.textContent = `Disconnected: ${reason}. Attempting to reconnect...`;
+});
+
+socket.on("reconnect", () => {
+  statusText.textContent = "Reconnected!";
+  if (myRoomId && myName) {
+    socket.emit("join_room", { roomId: myRoomId, name: myName });
+  }
+});
+
+socket.on("init", (data) => {
+  clientId = data.id;
+  myTeam = data.team;
+  myRole = data.role;
+  myName = data.name;
+  myRoomId = data.roomId;
+  field = data.field || field;
+  matchDuration = data.matchDuration || matchDuration;
+
+  roomIdLabel.textContent = myRoomId;
+  playerNameLabel.textContent = myName || "-";
+  roleLabel.textContent =
+    myRole === "player"
+      ? `PLAYER (${myTeam.toUpperCase()})`
+      : "SPECTATOR";
+
+  if (myRole === "player") {
+    roleLabel.classList.add("role-player");
+  } else {
+    roleLabel.classList.remove("role-player");
+  }
+
+  // 🔹 Spectators: see support UI + buttons
+  // 🔹 Players: support block hidden (they already know their side)
+  // Always show support UI (players + spectators)
+// Spectators actually use it, players can just ignore it
+  supportControls.style.display = "flex";
+
+
+  // Status text is visible for *everyone* (players + spectators)
+  statusText.textContent =
+    myRole === "player"
+      ? `Waiting for match to start...`
+      : `You are a spectator in Room ${myRoomId}. Choose a side to support.`;
+
+  setScreen("rules");
+});
+
+// State updates
+socket.on("state", (state) => {
+  latestState = state;
+
+  // Scores
+  scoreBlueEl.textContent = state.score.blue;
+  scoreRedEl.textContent = state.score.red;
+  timerEl.textContent = formatTime(state.matchTime);
+
+  // Player names for scoreboard
+  const bluePlayer = state.players.find((p) => p.team === "blue");
+  const redPlayer = state.players.find((p) => p.team === "red");
+  if (bluePlayerNameEl) {
+    bluePlayerNameEl.textContent = bluePlayer
+      ? bluePlayer.name || "BLUE"
+      : "BLUE";
+  }
+  if (redPlayerNameEl) {
+    redPlayerNameEl.textContent = redPlayer
+      ? redPlayer.name || "RED"
+      : "RED";
+  }
+
+  // Score pop animation
+  if (state.score.blue !== lastScore.blue) {
+    triggerScorePop("blue");
+  }
+  if (state.score.red !== lastScore.red) {
+    triggerScorePop("red");
+  }
+  lastScore = { ...state.score };
+
+  // === PERFORMANCE OPTIMIZATION: Ball path history ===
+  const now = performance.now();
+  ballHistory.push({ x: state.ball.x, y: state.ball.y, t: now });
+
+  // Remove old points efficiently
+  const cutoff = now - 2000; // Keep 2 seconds
+  let removeCount = 0;
+  while (ballHistory.length && ballHistory[0].t < cutoff) {
+    ballHistory.shift();
+    removeCount++;
+  }
+
+  // Supporters
+  if (state.supporters) {
+    supportStatus.textContent = `Fans: Blue ${state.supporters.blue} | Red ${state.supporters.red}`;
+  }
+
+  handleEvents(state);
+
+  // 🔹 Status line that *everyone* sees
+  if (!state.running) {
+    if (state.matchTime <= 0) {
+      const { blue, red } = state.score;
+      if (blue > red) {
+        statusText.textContent = `FULL-TIME: BLUE wins ${blue} - ${red}`;
+      } else if (red > blue) {
+        statusText.textContent = `FULL-TIME: RED wins ${blue} - ${red}`;
+      } else {
+        statusText.textContent = `FULL-TIME: Draw ${blue} - ${red}`;
+      }
+    } else {
+      statusText.textContent = "Match paused or waiting for both players.";
+    }
+  } else {
+    const halfLabel =
+      state.matchTime > matchDuration / 2 ? "1st Half" : "2nd Half";
+    statusText.textContent = `Match running • ${halfLabel}`;
+  }
+});
+
+// Score pop helper
+function triggerScorePop(side) {
+  const el =
+    side === "blue" ? blueScoreWrapper : side === "red" ? redScoreWrapper : null;
+  if (!el) return;
+  el.classList.remove("score-pop");
+  void el.offsetWidth; // force reflow
+  el.classList.add("score-pop");
+  setTimeout(() => {
+    el.classList.remove("score-pop");
+  }, 400);
+}
+
+// Events: kickoff / goal / halftime / fulltime
+function handleEvents(state) {
+  if (!state.lastEvent || !state.eventId) return;
+  if (state.eventId === lastSeenEventId) return;
+  lastSeenEventId = state.eventId;
+
+  ensureAudio();
+  const ev = state.lastEvent;
+
+  if (ev.type === "kickoff") {
+    const bluePlayer = state.players.find((p) => p.team === "blue");
+    const redPlayer = state.players.find((p) => p.team === "red");
+    const blueName = bluePlayer ? bluePlayer.name || "BLUE" : "BLUE";
+    const redName = redPlayer ? redPlayer.name || "RED" : "RED";
+
+    overlayText = `${blueName} vs ${redName}`;
+    overlayUntil = Date.now() + (introShownOnce ? 1500 : 2500);
+    introShownOnce = true;
+    playWhistle(false);
+  } else if (ev.type === "goal") {
+    const scorer = state.players.find((p) => p.team === ev.team);
+    const scorerName = scorer
+      ? scorer.name || ev.team.toUpperCase()
+      : ev.team.toUpperCase();
+    overlayText = `GOAL!!! ${scorerName}`;
+    overlayUntil = Date.now() + 3000;
+    replayPathUntil = Date.now() + 2500;
+    playCrowdCheer();
+    playWhistle(false);
+  } else if (ev.type === "halftime") {
+    overlayText = "HALF-TIME";
+    overlayUntil = Date.now() + 3000;
+    playWhistle(true);
+  } else if (ev.type === "fulltime") {
+    if (ev.winner === "draw") {
+      overlayText = "FULL-TIME • DRAW";
+    } else {
+      overlayText = `FULL-TIME • ${ev.winner.toUpperCase()} WINS!`;
+    }
+    overlayUntil = Date.now() + 4000;
+    playWhistle(true);
+  }
 }
 
 // ---------- Render loop ----------
