@@ -21,6 +21,15 @@ const BALL_RADIUS = 8;
 const BUMP_RANGE = PLAYER_RADIUS * 2.2;
 
 // ---- Rooms ----
+// room: {
+//   id,
+//   players: { socketId -> playerObj },
+//   spectators: { socketId -> spectatorObj },
+//   ball, score, matchTime, running,
+//   halfTimeTriggered, secondHalf,
+//   lastEvent, eventId,
+//   lastTickTime
+// }
 const rooms = new Map();
 
 // ---- Room helpers ----
@@ -397,7 +406,7 @@ function updatePlayers(room, dt) {
     if (p.y > FIELD_HEIGHT - PLAYER_RADIUS)
       p.y = FIELD_HEIGHT - PLAYER_RADIUS;
 
-    // bump (unchanged)
+    // bump
     if (p.input.bump && p.bumpCooldown <= 0) {
       for (const other of Object.values(room.players)) {
         if (other.id === p.id || other.team === p.team) continue;
@@ -469,28 +478,27 @@ function tryKickBall(room, p) {
   }
 }
 
-// 🟡 Ball: movement, walls, goals, and pure collision with players (no attraction)
-// and keep movement "free" like before (no crazy bounce, only blocking inward)
+// ---- Ball: free-flow, walls, goals, and continuous collision with players ----
 function updateBall(room, dt) {
   const b = room.ball;
   const friction = 0.985;
 
-  // Previous position for continuous collision
+  // Previous position (for continuous collision)
   const oldX = b.x;
   const oldY = b.y;
 
-  // Integrate velocity
+  // Move ball
   b.x += b.vx;
   b.y += b.vy;
 
-  // Apply friction (same as before)
+  // Friction (same as before)
   b.vx *= friction;
   b.vy *= friction;
 
   if (Math.abs(b.vx) < 0.02) b.vx = 0;
   if (Math.abs(b.vy) < 0.02) b.vy = 0;
 
-  // --- Wall bounce (top/bottom) ---
+  // Top / bottom walls
   if (b.y < BALL_RADIUS) {
     b.y = BALL_RADIUS;
     b.vy *= -0.8;
@@ -500,7 +508,7 @@ function updateBall(room, dt) {
     b.vy *= -0.8;
   }
 
-  // --- Goals / side walls ---
+  // Goals / side walls
   const goalTop = FIELD_HEIGHT * 0.3;
   const goalBottom = FIELD_HEIGHT * 0.7;
 
@@ -536,18 +544,18 @@ function updateBall(room, dt) {
     }
   }
 
-  // ===== Pure collision with players (no attraction, keep free movement) =====
+  // ===== Continuous collision with players (no attraction, free flow) =====
   const moveX = b.x - oldX;
   const moveY = b.y - oldY;
   const moveLenSq = moveX * moveX + moveY * moveY;
   const EPS = 1e-6;
 
   for (const p of Object.values(room.players)) {
-    // Exact touch radius: player circle + ball circle
+    // exact touch radius
     const R = PLAYER_RADIUS + BALL_RADIUS;
 
+    // if ball barely moved: overlap check
     if (moveLenSq < EPS) {
-      // Ball barely moved this frame: simple overlap check
       const dx0 = b.x - p.x;
       const dy0 = b.y - p.y;
       const dist0 = Math.hypot(dx0, dy0);
@@ -556,22 +564,20 @@ function updateBall(room, dt) {
         const ny0 = dy0 / dist0;
         const overlap0 = R - dist0;
 
-        // Push ball out
+        // push ball out
         b.x += nx0 * overlap0;
         b.y += ny0 * overlap0;
 
-        // Remove only inward velocity (keep tangential, so it moves "freely")
-        const vDotN0 = b.vx * nx0 + b.vy * ny0;
-        if (vDotN0 < 0) {
-          b.vx -= vDotN0 * nx0;
-          b.vy -= vDotN0 * ny0;
-        }
+        // add same kind of outward boost as your old code
+        const pvx0 = p.vx || 0;
+        const pvy0 = p.vy || 0;
+        b.vx += nx0 * (1.4 + Math.abs(pvx0) * 0.25);
+        b.vy += ny0 * (1.4 + Math.abs(pvy0) * 0.25);
       }
       continue;
     }
 
-    // Continuous segment-circle collision:
-    // closest point from ball path [old -> new] to player's center
+    // segment-circle test (ball path old -> new vs player circle)
     const segX = moveX;
     const segY = moveY;
     const toPlayerX = p.x - oldX;
@@ -589,23 +595,20 @@ function updateBall(room, dt) {
     const dist = Math.hypot(dx, dy);
 
     if (dist < R) {
-      // Real intersection: ball crossed into player circle this frame
-
-      // Normal from player to collision point
+      // normal from player to collision point
       const nx = dist === 0 ? 1 : dx / dist;
       const ny = dist === 0 ? 0 : dy / dist;
+      const overlap = R - dist;
 
-      // Put ball exactly on the surface: no overlap, no pull-in
-      b.x = p.x + nx * R;
-      b.y = p.y + ny * R;
+      // place ball right at contact point + push it a bit out
+      b.x = closestX + nx * overlap;
+      b.y = closestY + ny * overlap;
 
-      // Remove only inward component of velocity
-      // -> ball won't go through player, but still moves freely along tangent
-      const vDotN = b.vx * nx + b.vy * ny;
-      if (vDotN < 0) {
-        b.vx -= vDotN * nx;
-        b.vy -= vDotN * ny;
-      }
+      // add outward burst like your old collision
+      const pvx = p.vx || 0;
+      const pvy = p.vy || 0;
+      b.vx += nx * (1.4 + Math.abs(pvx) * 0.25);
+      b.vy += ny * (1.4 + Math.abs(pvy) * 0.25);
     }
   }
 }
