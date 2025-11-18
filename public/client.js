@@ -172,10 +172,63 @@ function resizeCanvas() {
   
   canvas.style.width = `${800 * scale}px`;
   canvas.style.height = `${450 * scale}px`;
+  
+  // Re-render pitch after resize
+  renderPitch();
 }
 
 window.addEventListener('load', resizeCanvas);
 window.addEventListener('resize', resizeCanvas);
+
+// ---------- Initial pitch render ----------
+function renderPitch() {
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Pitch stripes
+  ctx.clearRect(0, 0, w, h);
+  const stripes = 10;
+  const stripeWidth = w / stripes;
+  for (let i = 0; i < stripes; i++) {
+    ctx.fillStyle = i % 2 === 0 ? "#065f46" : "#047857";
+    ctx.fillRect(i * stripeWidth, 0, stripeWidth, h);
+  }
+
+  // Center line & circle
+  ctx.strokeStyle = "#bbf7d0";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(w / 2, 0);
+  ctx.lineTo(w / 2, h);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(w / 2, h / 2, 60, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Penalty boxes
+  const boxWidth = 120;
+  const boxHeight = 200;
+  ctx.strokeRect(0, h / 2 - boxHeight / 2, boxWidth, boxHeight);
+  ctx.strokeRect(w - boxWidth, h / 2 - boxHeight / 2, boxWidth, boxHeight);
+
+  // Goals
+  const goalHeight = h * 0.4;
+  const goalTop = (h - goalHeight) / 2;
+  ctx.fillStyle = "#fefce8";
+  ctx.fillRect(0, goalTop, 6, goalHeight);
+  ctx.fillRect(w - 6, goalTop, 6, goalHeight);
+
+  // Add "Waiting for players..." text
+  ctx.fillStyle = "#e5e7eb";
+  ctx.font = "20px system-ui";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Waiting for players...", w / 2, h / 2);
+}
+
+// Render pitch immediately
+renderPitch();
 
 // ---------- Screen helpers ----------
 function setScreen(name) {
@@ -436,12 +489,12 @@ socket.on("init", (data) => {
     roleLabel.classList.remove("role-player");
   }
 
-  // 🔹 Spectators: see support UI + buttons
-  // 🔹 Players: support block hidden (they already know their side)
-  // Always show support UI (players + spectators)
-// Spectators actually use it, players can just ignore it
-  supportControls.style.display = "flex";
-
+  // Show support controls only for spectators
+  if (myRole === "spectator") {
+    supportControls.classList.add("show");
+  } else {
+    supportControls.classList.remove("show");
+  }
 
   // Status text is visible for *everyone* (players + spectators)
   statusText.textContent =
@@ -587,6 +640,7 @@ function render() {
   const w = canvas.width;
   const h = canvas.height;
 
+  // === ALWAYS RENDER PITCH BACKGROUND ===
   // Pitch stripes
   ctx.clearRect(0, 0, w, h);
   const stripes = 10;
@@ -621,146 +675,156 @@ function render() {
   ctx.fillRect(0, goalTop, 6, goalHeight);
   ctx.fillRect(w - 6, goalTop, 6, goalHeight);
 
-  // Shadows for players
-  state.players.forEach((p) => {
-    ctx.fillStyle = "rgba(15,23,42,0.55)";
+  // === ONLY RENDER GAME OBJECTS IF WE HAVE ACTIVE PLAYERS ===
+  if (state.players && state.players.length > 0) {
+    // Shadows for players
+    state.players.forEach((p) => {
+      ctx.fillStyle = "rgba(15,23,42,0.55)";
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y + 10, 14, 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Shadow for ball
+    ctx.fillStyle = "rgba(15,23,42,0.6)";
     ctx.beginPath();
-    ctx.ellipse(p.x, p.y + 10, 14, 6, 0, 0, Math.PI * 2);
-    ctx.fill();
-  });
-
-  // Shadow for ball
-  ctx.fillStyle = "rgba(15,23,42,0.6)";
-  ctx.beginPath();
-  ctx.ellipse(state.ball.x, state.ball.y + 6, 10, 4, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Ball
-  ctx.fillStyle = "#facc15";
-  ctx.beginPath();
-  ctx.arc(state.ball.x, state.ball.y, 8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#111827";
-  ctx.stroke();
-
-  // Players (with names + YOU tag)
-  state.players.forEach((p) => {
-    const isMe = p.id === clientId;
-    const color = p.team === "blue" ? "#3b82f6" : "#f97373";
-    const outline = isMe ? "#fefce8" : "#0f172a";
-
-    // Body
-    ctx.beginPath();
-    ctx.fillStyle = color;
-    ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+    ctx.ellipse(state.ball.x, state.ball.y + 6, 10, 4, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.strokeStyle = outline;
-    ctx.lineWidth = isMe ? 3 : 2;
+    // Ball
+    ctx.fillStyle = "#facc15";
+    ctx.beginPath();
+    ctx.arc(state.ball.x, state.ball.y, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#111827";
     ctx.stroke();
 
-    // Name above
-    const label = p.name || (p.team === "blue" ? "BLUE" : p.team === "red" ? "RED" : "");
-    if (label) {
-      ctx.font = "11px system-ui";
-      ctx.fillStyle = isMe ? "#fef9c3" : "#e5e7eb";
-      const textWidth = ctx.measureText(label).width;
-      ctx.fillText(label, p.x - textWidth / 2, p.y - 20);
-    }
+    // Players (with names + YOU tag)
+    state.players.forEach((p) => {
+      const isMe = p.id === clientId;
+      const color = p.team === "blue" ? "#3b82f6" : "#f97373";
+      const outline = isMe ? "#fefce8" : "#0f172a";
 
-    // YOU tag
-    if (isMe) {
-      ctx.font = "10px system-ui";
-      ctx.fillStyle = "#bfdbfe";
-      const youWidth = ctx.measureText("YOU").width;
-      ctx.fillText("YOU", p.x - youWidth / 2, p.y + 26);
-    }
-  });
+      // Body
+      ctx.beginPath();
+      ctx.fillStyle = color;
+      ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+      ctx.fill();
 
-  // Ball trajectory after goal
-  if (replayPathUntil && Date.now() < replayPathUntil) {
-    ctx.save();
-    ctx.strokeStyle = "rgba(250,250,249,0.55)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    let started = false;
-    const now = performance.now();
-    const cutoff = now - 2000;
-    for (const pt of ballHistory) {
-      if (pt.t < cutoff) continue;
-      if (!started) {
-        ctx.moveTo(pt.x, pt.y);
-        started = true;
-      } else {
-        ctx.lineTo(pt.x, pt.y);
+      ctx.strokeStyle = outline;
+      ctx.lineWidth = isMe ? 3 : 2;
+      ctx.stroke();
+
+      // Name above
+      const label = p.name || (p.team === "blue" ? "BLUE" : p.team === "red" ? "RED" : "");
+      if (label) {
+        ctx.font = "11px system-ui";
+        ctx.fillStyle = isMe ? "#fef9c3" : "#e5e7eb";
+        const textWidth = ctx.measureText(label).width;
+        ctx.fillText(label, p.x - textWidth / 2, p.y - 20);
       }
+
+      // YOU tag
+      if (isMe) {
+        ctx.font = "10px system-ui";
+        ctx.fillStyle = "#bfdbfe";
+        const youWidth = ctx.measureText("YOU").width;
+        ctx.fillText("YOU", p.x - youWidth / 2, p.y + 26);
+      }
+    });
+
+    // Ball trajectory after goal
+    if (replayPathUntil && Date.now() < replayPathUntil) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(250,250,249,0.55)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      let started = false;
+      const now = performance.now();
+      const cutoff = now - 2000;
+      for (const pt of ballHistory) {
+        if (pt.t < cutoff) continue;
+        if (!started) {
+          ctx.moveTo(pt.x, pt.y);
+          started = true;
+        } else {
+          ctx.lineTo(pt.x, pt.y);
+        }
+      }
+      if (started) ctx.stroke();
+      ctx.restore();
     }
-    if (started) ctx.stroke();
-    ctx.restore();
-  }
 
-  // Sprint bar for local player
-  const me = state.players.find((p) => p.id === clientId);
-  if (me && myRole === "player") {
-    const energy = me.energy ?? 0;
-    const barWidth = 120;
-    const barX = 20;
-    const barY = h - 24;
+    // Sprint bar for local player
+    const me = state.players.find((p) => p.id === clientId);
+    if (me && myRole === "player") {
+      const energy = me.energy ?? 0;
+      const barWidth = 120;
+      const barX = 20;
+      const barY = h - 24;
+      ctx.fillStyle = "rgba(15,23,42,0.85)";
+      ctx.fillRect(barX - 2, barY - 10, barWidth + 4, 14);
+      ctx.fillStyle = "#4ade80";
+      ctx.fillRect(barX, barY - 8, barWidth * energy, 10);
+      ctx.strokeStyle = "rgba(15,23,42,0.9)";
+      ctx.strokeRect(barX - 2, barY - 10, barWidth + 4, 14);
+      ctx.fillStyle = "#e5e7eb";
+      ctx.font = "10px system-ui";
+      ctx.fillText("SPRINT (SHIFT)", barX, barY - 12);
+    }
+
+    // Minimap (top-right)
+    const miniW = 160;
+    const miniH = 90;
+    const miniX = w - miniW - 12;
+    const miniY = 12;
+    const sx = miniW / w;
+    const sy = miniH / h;
+
+    ctx.save();
     ctx.fillStyle = "rgba(15,23,42,0.85)";
-    ctx.fillRect(barX - 2, barY - 10, barWidth + 4, 14);
-    ctx.fillStyle = "#4ade80";
-    ctx.fillRect(barX, barY - 8, barWidth * energy, 10);
-    ctx.strokeStyle = "rgba(15,23,42,0.9)";
-    ctx.strokeRect(barX - 2, barY - 10, barWidth + 4, 14);
+    ctx.fillRect(miniX, miniY, miniW, miniH);
+    ctx.strokeStyle = "rgba(148,163,184,0.9)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(miniX, miniY, miniW, miniH);
+
+    // Center line on minimap
+    ctx.strokeStyle = "rgba(148,163,184,0.5)";
+    ctx.beginPath();
+    ctx.moveTo(miniX + miniW / 2, miniY);
+    ctx.lineTo(miniX + miniW / 2, miniY + miniH);
+    ctx.stroke();
+
+    // Players on minimap
+    state.players.forEach((p) => {
+      const isMe = p.id === clientId;
+      const px = miniX + p.x * sx;
+      const py = miniY + p.y * sy;
+      ctx.beginPath();
+      ctx.fillStyle = p.team === "blue" ? "#60a5fa" : "#fb7185";
+      ctx.arc(px, py, isMe ? 3.5 : 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Ball on minimap
+    const bx = miniX + state.ball.x * sx;
+    const by = miniY + state.ball.y * sy;
+    ctx.beginPath();
+    ctx.fillStyle = "#fde68a";
+    ctx.arc(bx, by, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  } else {
+    // Show waiting message when no players
     ctx.fillStyle = "#e5e7eb";
-    ctx.font = "10px system-ui";
-    ctx.fillText("SPRINT (SHIFT)", barX, barY - 12);
+    ctx.font = "20px system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Waiting for players...", w / 2, h / 2);
   }
 
-  // Minimap (top-right)
-  const miniW = 160;
-  const miniH = 90;
-  const miniX = w - miniW - 12;
-  const miniY = 12;
-  const sx = miniW / w;
-  const sy = miniH / h;
-
-  ctx.save();
-  ctx.fillStyle = "rgba(15,23,42,0.85)";
-  ctx.fillRect(miniX, miniY, miniW, miniH);
-  ctx.strokeStyle = "rgba(148,163,184,0.9)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(miniX, miniY, miniW, miniH);
-
-  // Center line on minimap
-  ctx.strokeStyle = "rgba(148,163,184,0.5)";
-  ctx.beginPath();
-  ctx.moveTo(miniX + miniW / 2, miniY);
-  ctx.lineTo(miniX + miniW / 2, miniY + miniH);
-  ctx.stroke();
-
-  // Players on minimap
-  state.players.forEach((p) => {
-    const isMe = p.id === clientId;
-    const px = miniX + p.x * sx;
-    const py = miniY + p.y * sy;
-    ctx.beginPath();
-    ctx.fillStyle = p.team === "blue" ? "#60a5fa" : "#fb7185";
-    ctx.arc(px, py, isMe ? 3.5 : 2.5, 0, Math.PI * 2);
-    ctx.fill();
-  });
-
-  // Ball on minimap
-  const bx = miniX + state.ball.x * sx;
-  const by = miniY + state.ball.y * sy;
-  ctx.beginPath();
-  ctx.fillStyle = "#fde68a";
-  ctx.arc(bx, by, 2.5, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.restore();
-
-  // Overlay (intro/goal/half/full)
+  // Overlay (intro/goal/half/full) - Always render on top
   if (overlayText && Date.now() < overlayUntil) {
     ctx.save();
     ctx.fillStyle = "rgba(15, 23, 42, 0.8)";
@@ -789,4 +853,5 @@ function formatTime(t) {
     .padStart(2, "0")}`;
 }
 
+// Start the render loop
 render();
