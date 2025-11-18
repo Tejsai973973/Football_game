@@ -21,15 +21,6 @@ const BALL_RADIUS = 8;
 const BUMP_RANGE = PLAYER_RADIUS * 2.2;
 
 // ---- Rooms ----
-// room: {
-//   id,
-//   players: { socketId -> playerObj },
-//   spectators: { socketId -> spectatorObj },
-//   ball, score, matchTime, running,
-//   halfTimeTriggered, secondHalf,
-//   lastEvent, eventId,
-//   lastTickTime
-// }
 const rooms = new Map();
 
 // ---- Room helpers ----
@@ -406,7 +397,7 @@ function updatePlayers(room, dt) {
     if (p.y > FIELD_HEIGHT - PLAYER_RADIUS)
       p.y = FIELD_HEIGHT - PLAYER_RADIUS;
 
-    // bump
+    // bump (unchanged)
     if (p.input.bump && p.bumpCooldown <= 0) {
       for (const other of Object.values(room.players)) {
         if (other.id === p.id || other.team === p.team) continue;
@@ -478,27 +469,28 @@ function tryKickBall(room, p) {
   }
 }
 
-// ---- Ball: free-flow, walls, goals, and continuous collision with players ----
+// 🟡 Ball: movement, walls, goals, and pure collision with players (no attraction)
+// and keep movement "free" like before (no crazy bounce, only blocking inward)
 function updateBall(room, dt) {
   const b = room.ball;
   const friction = 0.985;
 
-  // Previous position (for continuous collision)
+  // Store previous position for collision detection
   const oldX = b.x;
   const oldY = b.y;
 
-  // Move ball
+  // Apply velocity
   b.x += b.vx;
   b.y += b.vy;
 
-  // Friction (same as before)
+  // Apply friction
   b.vx *= friction;
   b.vy *= friction;
 
   if (Math.abs(b.vx) < 0.02) b.vx = 0;
   if (Math.abs(b.vy) < 0.02) b.vy = 0;
 
-  // Top / bottom walls
+  // --- Wall bounce (top/bottom) ---
   if (b.y < BALL_RADIUS) {
     b.y = BALL_RADIUS;
     b.vy *= -0.8;
@@ -508,7 +500,7 @@ function updateBall(room, dt) {
     b.vy *= -0.8;
   }
 
-  // Goals / side walls
+  // --- Goals / side walls ---
   const goalTop = FIELD_HEIGHT * 0.3;
   const goalBottom = FIELD_HEIGHT * 0.7;
 
@@ -544,71 +536,66 @@ function updateBall(room, dt) {
     }
   }
 
-  // ===== Continuous collision with players (no attraction, free flow) =====
-  const moveX = b.x - oldX;
-  const moveY = b.y - oldY;
-  const moveLenSq = moveX * moveX + moveY * moveY;
-  const EPS = 1e-6;
-
+  // ===== IMPROVED PLAYER COLLISION =====
   for (const p of Object.values(room.players)) {
-    // exact touch radius
-    const R = PLAYER_RADIUS + BALL_RADIUS;
+    const dx = b.x - p.x;
+    const dy = b.y - p.y;
+    const distance = Math.hypot(dx, dy);
+    const minDistance = PLAYER_RADIUS + BALL_RADIUS;
 
-    // if ball barely moved: overlap check
-    if (moveLenSq < EPS) {
-      const dx0 = b.x - p.x;
-      const dy0 = b.y - p.y;
-      const dist0 = Math.hypot(dx0, dy0);
-      if (dist0 > 0 && dist0 < R) {
-        const nx0 = dx0 / dist0;
-        const ny0 = dy0 / dist0;
-        const overlap0 = R - dist0;
+    if (distance < minDistance && distance > 0) {
+      // Collision detected - resolve overlap
+      const overlap = minDistance - distance;
+      const nx = dx / distance;
+      const ny = dy / distance;
 
-        // push ball out
-        b.x += nx0 * overlap0;
-        b.y += ny0 * overlap0;
+      // Push ball out of overlap
+      b.x += nx * overlap * 1.1;
+      b.y += ny * overlap * 1.1;
 
-        // add same kind of outward boost as your old code
-        const pvx0 = p.vx || 0;
-        const pvy0 = p.vy || 0;
-        b.vx += nx0 * (1.4 + Math.abs(pvx0) * 0.25);
-        b.vy += ny0 * (1.4 + Math.abs(pvy0) * 0.25);
+      // Calculate relative velocity between ball and player
+      const relVx = b.vx - p.vx;
+      const relVy = b.vy - p.vy;
+
+      // Velocity along collision normal
+      const velAlongNormal = relVx * nx + relVy * ny;
+
+      // Only resolve if objects are moving towards each other
+      if (velAlongNormal < 0) {
+        // Elasticity factor (0.8 = bouncy, 1.0 = super bouncy)
+        const elasticity = 0.85;
+        
+        // Calculate impulse scalar
+        const impulseScalar = -(1 + elasticity) * velAlongNormal;
+        
+        // Apply impulse to ball (mass ratio favors ball movement)
+        const ballMassRatio = 0.7; // Ball is lighter, moves more
+        b.vx += impulseScalar * nx * ballMassRatio;
+        b.vy += impulseScalar * ny * ballMassRatio;
+
+        // Small effect on player (recoil)
+        const playerMassRatio = 0.3; // Player is heavier, moves less
+        p.vx -= impulseScalar * nx * playerMassRatio * 0.5;
+        p.vy -= impulseScalar * ny * playerMassRatio * 0.5;
+
+        // Add some randomness for more natural movement
+        const randomFactor = 0.1;
+        b.vx += (Math.random() - 0.5) * randomFactor;
+        b.vy += (Math.random() - 0.5) * randomFactor;
       }
-      continue;
-    }
 
-    // segment-circle test (ball path old -> new vs player circle)
-    const segX = moveX;
-    const segY = moveY;
-    const toPlayerX = p.x - oldX;
-    const toPlayerY = p.y - oldY;
+      // Kick boost if player is actively kicking
+      if (p.input.kick && distance < minDistance + 10) {
+        const kickPower = 8;
+        const kickDirX = b.vx || nx; // Use current direction or push away
+        const kickDirY = b.vy || ny;
+        const kickLen = Math.hypot(kickDirX, kickDirY) || 1;
+        
+        b.vx += (kickDirX / kickLen) * kickPower;
+        b.vy += (kickDirY / kickLen) * kickPower;
+      }
 
-    let t = (toPlayerX * segX + toPlayerY * segY) / moveLenSq;
-    if (t < 0) t = 0;
-    if (t > 1) t = 1;
-
-    const closestX = oldX + segX * t;
-    const closestY = oldY + segY * t;
-
-    const dx = closestX - p.x;
-    const dy = closestY - p.y;
-    const dist = Math.hypot(dx, dy);
-
-    if (dist < R) {
-      // normal from player to collision point
-      const nx = dist === 0 ? 1 : dx / dist;
-      const ny = dist === 0 ? 0 : dy / dist;
-      const overlap = R - dist;
-
-      // place ball right at contact point + push it a bit out
-      b.x = closestX + nx * overlap;
-      b.y = closestY + ny * overlap;
-
-      // add outward burst like your old collision
-      const pvx = p.vx || 0;
-      const pvy = p.vy || 0;
-      b.vx += nx * (1.4 + Math.abs(pvx) * 0.25);
-      b.vy += ny * (1.4 + Math.abs(pvy) * 0.25);
+      break; // Only handle one collision per frame
     }
   }
 }
