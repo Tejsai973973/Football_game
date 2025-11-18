@@ -150,10 +150,6 @@ let replayPathUntil = 0;
 let lastScore = { blue: 0, red: 0 };
 let introShownOnce = false;
 
-// === INPUT RATE LIMITING ===
-let lastInputTime = 0;
-const INPUT_THROTTLE = 50; // ms
-
 // ---------- Mobile detection ----------
 function isProbablyMobile() {
   const ua = navigator.userAgent || navigator.vendor || window.opera || "";
@@ -163,72 +159,6 @@ function isProbablyMobile() {
 if (isProbablyMobile()) {
   document.body.classList.add("is-mobile");
 }
-
-// ---------- Canvas Scaling (Responsive) ----------
-function resizeCanvas() {
-  const container = gameContainer;
-  const containerWidth = container.clientWidth;
-  const scale = Math.min(containerWidth / 800, 1);
-  
-  canvas.style.width = `${800 * scale}px`;
-  canvas.style.height = `${450 * scale}px`;
-  
-  // Re-render pitch after resize
-  renderPitch();
-}
-
-window.addEventListener('load', resizeCanvas);
-window.addEventListener('resize', resizeCanvas);
-
-// ---------- Initial pitch render ----------
-function renderPitch() {
-  const w = canvas.width;
-  const h = canvas.height;
-
-  // Pitch stripes
-  ctx.clearRect(0, 0, w, h);
-  const stripes = 10;
-  const stripeWidth = w / stripes;
-  for (let i = 0; i < stripes; i++) {
-    ctx.fillStyle = i % 2 === 0 ? "#065f46" : "#047857";
-    ctx.fillRect(i * stripeWidth, 0, stripeWidth, h);
-  }
-
-  // Center line & circle
-  ctx.strokeStyle = "#bbf7d0";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(w / 2, 0);
-  ctx.lineTo(w / 2, h);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.arc(w / 2, h / 2, 60, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // Penalty boxes
-  const boxWidth = 120;
-  const boxHeight = 200;
-  ctx.strokeRect(0, h / 2 - boxHeight / 2, boxWidth, boxHeight);
-  ctx.strokeRect(w - boxWidth, h / 2 - boxHeight / 2, boxWidth, boxHeight);
-
-  // Goals
-  const goalHeight = h * 0.4;
-  const goalTop = (h - goalHeight) / 2;
-  ctx.fillStyle = "#fefce8";
-  ctx.fillRect(0, goalTop, 6, goalHeight);
-  ctx.fillRect(w - 6, goalTop, 6, goalHeight);
-
-  // Add "Waiting for players..." text
-  ctx.fillStyle = "#e5e7eb";
-  ctx.font = "20px system-ui";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("Waiting for players...", w / 2, h / 2);
-}
-
-// Render pitch immediately
-renderPitch();
 
 // ---------- Screen helpers ----------
 function setScreen(name) {
@@ -301,21 +231,173 @@ btnFullscreen.onclick = () => {
   }
 };
 
-// === MOBILE UX IMPROVEMENTS ===
-function addButtonFeedback(btn) {
-  btn.addEventListener('touchstart', () => {
-    btn.style.transform = 'scale(0.95)';
-    btn.style.opacity = '0.8';
-  });
-  
-  btn.addEventListener('touchend', () => {
-    btn.style.transform = 'scale(1)';
-    btn.style.opacity = '1';
-  });
+// ---------- Socket handlers ----------
+socket.on("join_error", (msg) => {
+  welcomeError.textContent = msg || "Failed to join room.";
+});
+
+socket.on("init", (data) => {
+  clientId = data.id;
+  myTeam = data.team;
+  myRole = data.role;
+  myName = data.name;
+  myRoomId = data.roomId;
+  field = data.field || field;
+  matchDuration = data.matchDuration || matchDuration;
+
+  roomIdLabel.textContent = myRoomId;
+  playerNameLabel.textContent = myName || "-";
+  roleLabel.textContent =
+    myRole === "player"
+      ? `PLAYER (${myTeam.toUpperCase()})`
+      : "SPECTATOR";
+
+  if (myRole === "player") {
+    roleLabel.classList.add("role-player");
+  } else {
+    roleLabel.classList.remove("role-player");
+  }
+
+  // 🔹 Spectators: see support UI + buttons
+  // 🔹 Players: support block hidden (they already know their side)
+  // Always show support UI (players + spectators)
+// Spectators actually use it, players can just ignore it
+  supportControls.style.display = "flex";
+
+
+  // Status text is visible for *everyone* (players + spectators)
+  statusText.textContent =
+    myRole === "player"
+      ? `Waiting for match to start...`
+      : `You are a spectator in Room ${myRoomId}. Choose a side to support.`;
+
+  setScreen("rules");
+});
+
+// State updates
+socket.on("state", (state) => {
+  latestState = state;
+
+  // Scores
+  scoreBlueEl.textContent = state.score.blue;
+  scoreRedEl.textContent = state.score.red;
+  timerEl.textContent = formatTime(state.matchTime);
+
+  // Player names for scoreboard
+  const bluePlayer = state.players.find((p) => p.team === "blue");
+  const redPlayer = state.players.find((p) => p.team === "red");
+  if (bluePlayerNameEl) {
+    bluePlayerNameEl.textContent = bluePlayer
+      ? bluePlayer.name || "BLUE"
+      : "BLUE";
+  }
+  if (redPlayerNameEl) {
+    redPlayerNameEl.textContent = redPlayer
+      ? redPlayer.name || "RED"
+      : "RED";
+  }
+
+  // Score pop animation
+  if (state.score.blue !== lastScore.blue) {
+    triggerScorePop("blue");
+  }
+  if (state.score.red !== lastScore.red) {
+    triggerScorePop("red");
+  }
+  lastScore = { ...state.score };
+
+  // Ball path history (for short replay)
+  const now = performance.now();
+  ballHistory.push({ x: state.ball.x, y: state.ball.y, t: now });
+  const cutoff = now - 3000;
+  while (ballHistory.length && ballHistory[0].t < cutoff) {
+    ballHistory.shift();
+  }
+
+  // Supporters
+  if (state.supporters) {
+    supportStatus.textContent = `Fans: Blue ${state.supporters.blue} | Red ${state.supporters.red}`;
+  }
+
+  handleEvents(state);
+
+  // 🔹 Status line that *everyone* sees
+  if (!state.running) {
+    if (state.matchTime <= 0) {
+      const { blue, red } = state.score;
+      if (blue > red) {
+        statusText.textContent = `FULL-TIME: BLUE wins ${blue} - ${red}`;
+      } else if (red > blue) {
+        statusText.textContent = `FULL-TIME: RED wins ${blue} - ${red}`;
+      } else {
+        statusText.textContent = `FULL-TIME: Draw ${blue} - ${red}`;
+      }
+    } else {
+      statusText.textContent = "Match paused or waiting for both players.";
+    }
+  } else {
+    const halfLabel =
+      state.matchTime > matchDuration / 2 ? "1st Half" : "2nd Half";
+    statusText.textContent = `Match running • ${halfLabel}`;
+  }
+});
+
+// Score pop helper
+function triggerScorePop(side) {
+  const el =
+    side === "blue" ? blueScoreWrapper : side === "red" ? redScoreWrapper : null;
+  if (!el) return;
+  el.classList.remove("score-pop");
+  void el.offsetWidth; // force reflow
+  el.classList.add("score-pop");
+  setTimeout(() => {
+    el.classList.remove("score-pop");
+  }, 400);
 }
 
-// Apply to all mobile buttons
-document.querySelectorAll('.dpad-btn, .action-btn').forEach(addButtonFeedback);
+// Events: kickoff / goal / halftime / fulltime
+function handleEvents(state) {
+  if (!state.lastEvent || !state.eventId) return;
+  if (state.eventId === lastSeenEventId) return;
+  lastSeenEventId = state.eventId;
+
+  ensureAudio();
+  const ev = state.lastEvent;
+
+  if (ev.type === "kickoff") {
+    const bluePlayer = state.players.find((p) => p.team === "blue");
+    const redPlayer = state.players.find((p) => p.team === "red");
+    const blueName = bluePlayer ? bluePlayer.name || "BLUE" : "BLUE";
+    const redName = redPlayer ? redPlayer.name || "RED" : "RED";
+
+    overlayText = `${blueName} vs ${redName}`;
+    overlayUntil = Date.now() + (introShownOnce ? 1500 : 2500);
+    introShownOnce = true;
+    playWhistle(false);
+  } else if (ev.type === "goal") {
+    const scorer = state.players.find((p) => p.team === ev.team);
+    const scorerName = scorer
+      ? scorer.name || ev.team.toUpperCase()
+      : ev.team.toUpperCase();
+    overlayText = `GOAL!!! ${scorerName}`;
+    overlayUntil = Date.now() + 3000;
+    replayPathUntil = Date.now() + 2500;
+    playCrowdCheer();
+    playWhistle(false);
+  } else if (ev.type === "halftime") {
+    overlayText = "HALF-TIME";
+    overlayUntil = Date.now() + 3000;
+    playWhistle(true);
+  } else if (ev.type === "fulltime") {
+    if (ev.winner === "draw") {
+      overlayText = "FULL-TIME • DRAW";
+    } else {
+      overlayText = `FULL-TIME • ${ev.winner.toUpperCase()} WINS!`;
+    }
+    overlayUntil = Date.now() + 4000;
+    playWhistle(true);
+  }
+}
 
 // ---------- Keyboard input ----------
 window.addEventListener("keydown", (e) => {
@@ -436,202 +518,9 @@ if (btnMobileBump) {
   btnMobileBump.addEventListener("click", doBump);
 }
 
-// === INPUT RATE LIMITING ===
+// Send input state
 function sendInput() {
-  const now = Date.now();
-  if (now - lastInputTime < INPUT_THROTTLE) return;
-  
-  lastInputTime = now;
   socket.emit("input", keys);
-}
-
-// === MEMORY LEAK PREVENTION ===
-window.addEventListener('beforeunload', () => {
-  socket.disconnect();
-});
-
-// ---------- Socket handlers ----------
-socket.on("join_error", (msg) => {
-  welcomeError.textContent = msg || "Failed to join room.";
-});
-
-// === ERROR HANDLING & RECONNECTION ===
-socket.on("disconnect", (reason) => {
-  statusText.textContent = `Disconnected: ${reason}. Attempting to reconnect...`;
-});
-
-socket.on("reconnect", () => {
-  statusText.textContent = "Reconnected!";
-  if (myRoomId && myName) {
-    socket.emit("join_room", { roomId: myRoomId, name: myName });
-  }
-});
-
-socket.on("init", (data) => {
-  clientId = data.id;
-  myTeam = data.team;
-  myRole = data.role;
-  myName = data.name;
-  myRoomId = data.roomId;
-  field = data.field || field;
-  matchDuration = data.matchDuration || matchDuration;
-
-  roomIdLabel.textContent = myRoomId;
-  playerNameLabel.textContent = myName || "-";
-  roleLabel.textContent =
-    myRole === "player"
-      ? `PLAYER (${myTeam.toUpperCase()})`
-      : "SPECTATOR";
-
-  if (myRole === "player") {
-    roleLabel.classList.add("role-player");
-  } else {
-    roleLabel.classList.remove("role-player");
-  }
-
-  // Show support controls only for spectators
-  if (myRole === "spectator") {
-    supportControls.classList.add("show");
-  } else {
-    supportControls.classList.remove("show");
-  }
-
-  // Status text is visible for *everyone* (players + spectators)
-  statusText.textContent =
-    myRole === "player"
-      ? `Waiting for match to start...`
-      : `You are a spectator in Room ${myRoomId}. Choose a side to support.`;
-
-  setScreen("rules");
-});
-
-// State updates
-socket.on("state", (state) => {
-  latestState = state;
-
-  // Scores
-  scoreBlueEl.textContent = state.score.blue;
-  scoreRedEl.textContent = state.score.red;
-  timerEl.textContent = formatTime(state.matchTime);
-
-  // Player names for scoreboard
-  const bluePlayer = state.players.find((p) => p.team === "blue");
-  const redPlayer = state.players.find((p) => p.team === "red");
-  if (bluePlayerNameEl) {
-    bluePlayerNameEl.textContent = bluePlayer
-      ? bluePlayer.name || "BLUE"
-      : "BLUE";
-  }
-  if (redPlayerNameEl) {
-    redPlayerNameEl.textContent = redPlayer
-      ? redPlayer.name || "RED"
-      : "RED";
-  }
-
-  // Score pop animation
-  if (state.score.blue !== lastScore.blue) {
-    triggerScorePop("blue");
-  }
-  if (state.score.red !== lastScore.red) {
-    triggerScorePop("red");
-  }
-  lastScore = { ...state.score };
-
-  // === PERFORMANCE OPTIMIZATION: Ball path history ===
-  const now = performance.now();
-  ballHistory.push({ x: state.ball.x, y: state.ball.y, t: now });
-
-  // Remove old points efficiently
-  const cutoff = now - 2000; // Keep 2 seconds
-  let removeCount = 0;
-  while (ballHistory.length && ballHistory[0].t < cutoff) {
-    ballHistory.shift();
-    removeCount++;
-  }
-
-  // Supporters
-  if (state.supporters) {
-    supportStatus.textContent = `Fans: Blue ${state.supporters.blue} | Red ${state.supporters.red}`;
-  }
-
-  handleEvents(state);
-
-  // 🔹 Status line that *everyone* sees
-  if (!state.running) {
-    if (state.matchTime <= 0) {
-      const { blue, red } = state.score;
-      if (blue > red) {
-        statusText.textContent = `FULL-TIME: BLUE wins ${blue} - ${red}`;
-      } else if (red > blue) {
-        statusText.textContent = `FULL-TIME: RED wins ${blue} - ${red}`;
-      } else {
-        statusText.textContent = `FULL-TIME: Draw ${blue} - ${red}`;
-      }
-    } else {
-      statusText.textContent = "Match paused or waiting for both players.";
-    }
-  } else {
-    const halfLabel =
-      state.matchTime > matchDuration / 2 ? "1st Half" : "2nd Half";
-    statusText.textContent = `Match running • ${halfLabel}`;
-  }
-});
-
-// Score pop helper
-function triggerScorePop(side) {
-  const el =
-    side === "blue" ? blueScoreWrapper : side === "red" ? redScoreWrapper : null;
-  if (!el) return;
-  el.classList.remove("score-pop");
-  void el.offsetWidth; // force reflow
-  el.classList.add("score-pop");
-  setTimeout(() => {
-    el.classList.remove("score-pop");
-  }, 400);
-}
-
-// Events: kickoff / goal / halftime / fulltime
-function handleEvents(state) {
-  if (!state.lastEvent || !state.eventId) return;
-  if (state.eventId === lastSeenEventId) return;
-  lastSeenEventId = state.eventId;
-
-  ensureAudio();
-  const ev = state.lastEvent;
-
-  if (ev.type === "kickoff") {
-    const bluePlayer = state.players.find((p) => p.team === "blue");
-    const redPlayer = state.players.find((p) => p.team === "red");
-    const blueName = bluePlayer ? bluePlayer.name || "BLUE" : "BLUE";
-    const redName = redPlayer ? redPlayer.name || "RED" : "RED";
-
-    overlayText = `${blueName} vs ${redName}`;
-    overlayUntil = Date.now() + (introShownOnce ? 1500 : 2500);
-    introShownOnce = true;
-    playWhistle(false);
-  } else if (ev.type === "goal") {
-    const scorer = state.players.find((p) => p.team === ev.team);
-    const scorerName = scorer
-      ? scorer.name || ev.team.toUpperCase()
-      : ev.team.toUpperCase();
-    overlayText = `GOAL!!! ${scorerName}`;
-    overlayUntil = Date.now() + 3000;
-    replayPathUntil = Date.now() + 2500;
-    playCrowdCheer();
-    playWhistle(false);
-  } else if (ev.type === "halftime") {
-    overlayText = "HALF-TIME";
-    overlayUntil = Date.now() + 3000;
-    playWhistle(true);
-  } else if (ev.type === "fulltime") {
-    if (ev.winner === "draw") {
-      overlayText = "FULL-TIME • DRAW";
-    } else {
-      overlayText = `FULL-TIME • ${ev.winner.toUpperCase()} WINS!`;
-    }
-    overlayUntil = Date.now() + 4000;
-    playWhistle(true);
-  }
 }
 
 // ---------- Render loop ----------
@@ -640,7 +529,6 @@ function render() {
   const w = canvas.width;
   const h = canvas.height;
 
-  // === ALWAYS RENDER PITCH BACKGROUND ===
   // Pitch stripes
   ctx.clearRect(0, 0, w, h);
   const stripes = 10;
@@ -675,156 +563,146 @@ function render() {
   ctx.fillRect(0, goalTop, 6, goalHeight);
   ctx.fillRect(w - 6, goalTop, 6, goalHeight);
 
-  // === ONLY RENDER GAME OBJECTS IF WE HAVE ACTIVE PLAYERS ===
-  if (state.players && state.players.length > 0) {
-    // Shadows for players
-    state.players.forEach((p) => {
-      ctx.fillStyle = "rgba(15,23,42,0.55)";
-      ctx.beginPath();
-      ctx.ellipse(p.x, p.y + 10, 14, 6, 0, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    // Shadow for ball
-    ctx.fillStyle = "rgba(15,23,42,0.6)";
+  // Shadows for players
+  state.players.forEach((p) => {
+    ctx.fillStyle = "rgba(15,23,42,0.55)";
     ctx.beginPath();
-    ctx.ellipse(state.ball.x, state.ball.y + 6, 10, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(p.x, p.y + 10, 14, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Shadow for ball
+  ctx.fillStyle = "rgba(15,23,42,0.6)";
+  ctx.beginPath();
+  ctx.ellipse(state.ball.x, state.ball.y + 6, 10, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ball
+  ctx.fillStyle = "#facc15";
+  ctx.beginPath();
+  ctx.arc(state.ball.x, state.ball.y, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#111827";
+  ctx.stroke();
+
+  // Players (with names + YOU tag)
+  state.players.forEach((p) => {
+    const isMe = p.id === clientId;
+    const color = p.team === "blue" ? "#3b82f6" : "#f97373";
+    const outline = isMe ? "#fefce8" : "#0f172a";
+
+    // Body
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
     ctx.fill();
 
-    // Ball
-    ctx.fillStyle = "#facc15";
-    ctx.beginPath();
-    ctx.arc(state.ball.x, state.ball.y, 8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#111827";
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = isMe ? 3 : 2;
     ctx.stroke();
 
-    // Players (with names + YOU tag)
-    state.players.forEach((p) => {
-      const isMe = p.id === clientId;
-      const color = p.team === "blue" ? "#3b82f6" : "#f97373";
-      const outline = isMe ? "#fefce8" : "#0f172a";
-
-      // Body
-      ctx.beginPath();
-      ctx.fillStyle = color;
-      ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.strokeStyle = outline;
-      ctx.lineWidth = isMe ? 3 : 2;
-      ctx.stroke();
-
-      // Name above
-      const label = p.name || (p.team === "blue" ? "BLUE" : p.team === "red" ? "RED" : "");
-      if (label) {
-        ctx.font = "11px system-ui";
-        ctx.fillStyle = isMe ? "#fef9c3" : "#e5e7eb";
-        const textWidth = ctx.measureText(label).width;
-        ctx.fillText(label, p.x - textWidth / 2, p.y - 20);
-      }
-
-      // YOU tag
-      if (isMe) {
-        ctx.font = "10px system-ui";
-        ctx.fillStyle = "#bfdbfe";
-        const youWidth = ctx.measureText("YOU").width;
-        ctx.fillText("YOU", p.x - youWidth / 2, p.y + 26);
-      }
-    });
-
-    // Ball trajectory after goal
-    if (replayPathUntil && Date.now() < replayPathUntil) {
-      ctx.save();
-      ctx.strokeStyle = "rgba(250,250,249,0.55)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      let started = false;
-      const now = performance.now();
-      const cutoff = now - 2000;
-      for (const pt of ballHistory) {
-        if (pt.t < cutoff) continue;
-        if (!started) {
-          ctx.moveTo(pt.x, pt.y);
-          started = true;
-        } else {
-          ctx.lineTo(pt.x, pt.y);
-        }
-      }
-      if (started) ctx.stroke();
-      ctx.restore();
+    // Name above
+    const label = p.name || (p.team === "blue" ? "BLUE" : p.team === "red" ? "RED" : "");
+    if (label) {
+      ctx.font = "11px system-ui";
+      ctx.fillStyle = isMe ? "#fef9c3" : "#e5e7eb";
+      const textWidth = ctx.measureText(label).width;
+      ctx.fillText(label, p.x - textWidth / 2, p.y - 20);
     }
 
-    // Sprint bar for local player
-    const me = state.players.find((p) => p.id === clientId);
-    if (me && myRole === "player") {
-      const energy = me.energy ?? 0;
-      const barWidth = 120;
-      const barX = 20;
-      const barY = h - 24;
-      ctx.fillStyle = "rgba(15,23,42,0.85)";
-      ctx.fillRect(barX - 2, barY - 10, barWidth + 4, 14);
-      ctx.fillStyle = "#4ade80";
-      ctx.fillRect(barX, barY - 8, barWidth * energy, 10);
-      ctx.strokeStyle = "rgba(15,23,42,0.9)";
-      ctx.strokeRect(barX - 2, barY - 10, barWidth + 4, 14);
-      ctx.fillStyle = "#e5e7eb";
+    // YOU tag
+    if (isMe) {
       ctx.font = "10px system-ui";
-      ctx.fillText("SPRINT (SHIFT)", barX, barY - 12);
+      ctx.fillStyle = "#bfdbfe";
+      const youWidth = ctx.measureText("YOU").width;
+      ctx.fillText("YOU", p.x - youWidth / 2, p.y + 26);
     }
+  });
 
-    // Minimap (top-right)
-    const miniW = 160;
-    const miniH = 90;
-    const miniX = w - miniW - 12;
-    const miniY = 12;
-    const sx = miniW / w;
-    const sy = miniH / h;
-
+  // Ball trajectory after goal
+  if (replayPathUntil && Date.now() < replayPathUntil) {
     ctx.save();
-    ctx.fillStyle = "rgba(15,23,42,0.85)";
-    ctx.fillRect(miniX, miniY, miniW, miniH);
-    ctx.strokeStyle = "rgba(148,163,184,0.9)";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(miniX, miniY, miniW, miniH);
-
-    // Center line on minimap
-    ctx.strokeStyle = "rgba(148,163,184,0.5)";
+    ctx.strokeStyle = "rgba(250,250,249,0.55)";
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(miniX + miniW / 2, miniY);
-    ctx.lineTo(miniX + miniW / 2, miniY + miniH);
-    ctx.stroke();
-
-    // Players on minimap
-    state.players.forEach((p) => {
-      const isMe = p.id === clientId;
-      const px = miniX + p.x * sx;
-      const py = miniY + p.y * sy;
-      ctx.beginPath();
-      ctx.fillStyle = p.team === "blue" ? "#60a5fa" : "#fb7185";
-      ctx.arc(px, py, isMe ? 3.5 : 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    // Ball on minimap
-    const bx = miniX + state.ball.x * sx;
-    const by = miniY + state.ball.y * sy;
-    ctx.beginPath();
-    ctx.fillStyle = "#fde68a";
-    ctx.arc(bx, by, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-
+    let started = false;
+    const now = performance.now();
+    const cutoff = now - 2000;
+    for (const pt of ballHistory) {
+      if (pt.t < cutoff) continue;
+      if (!started) {
+        ctx.moveTo(pt.x, pt.y);
+        started = true;
+      } else {
+        ctx.lineTo(pt.x, pt.y);
+      }
+    }
+    if (started) ctx.stroke();
     ctx.restore();
-  } else {
-    // Show waiting message when no players
-    ctx.fillStyle = "#e5e7eb";
-    ctx.font = "20px system-ui";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("Waiting for players...", w / 2, h / 2);
   }
 
-  // Overlay (intro/goal/half/full) - Always render on top
+  // Sprint bar for local player
+  const me = state.players.find((p) => p.id === clientId);
+  if (me && myRole === "player") {
+    const energy = me.energy ?? 0;
+    const barWidth = 120;
+    const barX = 20;
+    const barY = h - 24;
+    ctx.fillStyle = "rgba(15,23,42,0.85)";
+    ctx.fillRect(barX - 2, barY - 10, barWidth + 4, 14);
+    ctx.fillStyle = "#4ade80";
+    ctx.fillRect(barX, barY - 8, barWidth * energy, 10);
+    ctx.strokeStyle = "rgba(15,23,42,0.9)";
+    ctx.strokeRect(barX - 2, barY - 10, barWidth + 4, 14);
+    ctx.fillStyle = "#e5e7eb";
+    ctx.font = "10px system-ui";
+    ctx.fillText("SPRINT (SHIFT)", barX, barY - 12);
+  }
+
+  // Minimap (top-right)
+  const miniW = 160;
+  const miniH = 90;
+  const miniX = w - miniW - 12;
+  const miniY = 12;
+  const sx = miniW / w;
+  const sy = miniH / h;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(15,23,42,0.85)";
+  ctx.fillRect(miniX, miniY, miniW, miniH);
+  ctx.strokeStyle = "rgba(148,163,184,0.9)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(miniX, miniY, miniW, miniH);
+
+  // Center line on minimap
+  ctx.strokeStyle = "rgba(148,163,184,0.5)";
+  ctx.beginPath();
+  ctx.moveTo(miniX + miniW / 2, miniY);
+  ctx.lineTo(miniX + miniW / 2, miniY + miniH);
+  ctx.stroke();
+
+  // Players on minimap
+  state.players.forEach((p) => {
+    const isMe = p.id === clientId;
+    const px = miniX + p.x * sx;
+    const py = miniY + p.y * sy;
+    ctx.beginPath();
+    ctx.fillStyle = p.team === "blue" ? "#60a5fa" : "#fb7185";
+    ctx.arc(px, py, isMe ? 3.5 : 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Ball on minimap
+  const bx = miniX + state.ball.x * sx;
+  const by = miniY + state.ball.y * sy;
+  ctx.beginPath();
+  ctx.fillStyle = "#fde68a";
+  ctx.arc(bx, by, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+
+  // Overlay (intro/goal/half/full)
   if (overlayText && Date.now() < overlayUntil) {
     ctx.save();
     ctx.fillStyle = "rgba(15, 23, 42, 0.8)";
@@ -853,5 +731,4 @@ function formatTime(t) {
     .padStart(2, "0")}`;
 }
 
-// Start the render loop
 render();

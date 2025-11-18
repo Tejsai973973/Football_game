@@ -4,11 +4,6 @@
   <meta charset="UTF-8" />
   <title>1v1 Football Arena</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  
-  <!-- Added mobile meta tags -->
-  <meta name="theme-color" content="#020617">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
   <style>
     :root {
@@ -417,31 +412,27 @@
       border-radius: 18px;
       background: #065f46;
 
-      /* responsive sizing */
+  /* responsive sizing */
       width: 100%;
       max-width: 100%;
       height: auto;
 
-      /* ✅ IMPROVED: Better responsive scaling */
-      max-height: 70vh;
-      object-fit: contain;
+  /* ✅ NEW: never let the canvas be so tall that it gets cut */
+      max-height: calc(100vh - 260px); /* tweak 260 if needed */
 
       border: 1px solid rgba(148, 163, 184, 0.35);
       box-shadow: 0 18px 40px rgba(15, 23, 42, 0.95);
     }
 
+
     #supportControls {
       margin-top: 8px;
       font-size: 12px;
-      display: none; /* Hidden by default */
+      display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 6px;
       justify-content: center;
-    }
-
-    #supportControls.show {
-      display: flex; /* Show when needed */
     }
 
     #supportPrompt {
@@ -496,7 +487,6 @@
       cursor: pointer;
       box-shadow: 0 8px 18px rgba(15, 23, 42, 0.9);
       touch-action: none;
-      transition: transform 0.1s ease, opacity 0.1s ease;
     }
     .dpad-btn.empty {
       visibility: hidden;
@@ -542,9 +532,6 @@
       .title-block h1 {
         font-size: 21px;
       }
-      #gameCanvas {
-        max-height: 60vh; /* Slightly smaller on tablets */
-      }
     }
 
     @media (max-width: 520px) {
@@ -565,15 +552,6 @@
       }
       #topBar-right {
         justify-content: space-between;
-      }
-      #gameCanvas {
-        max-height: 50vh; /* Even smaller on phones */
-      }
-    }
-
-    @media (max-height: 700px) {
-      #gameCanvas {
-        max-height: 55vh; /* Adjust for shorter screens */
       }
     }
   </style>
@@ -605,16 +583,16 @@
           <!-- Screen 1: Let's Begin -->
           <div id="screen-welcome" class="screen active">
             <div class="card-narrow">
-              <h2 class="section-title">Let's Begin</h2>
+              <h2 class="section-title">Let’s Begin</h2>
 
               <div class="field">
                 <label>Your Name</label>
-                <input id="inputName" type="text" placeholder="e.g. Tej, Messi, CR7" maxlength="20" />
+                <input id="inputName" type="text" placeholder="e.g. Tej, Messi, CR7" />
               </div>
 
               <div class="field">
                 <label>Room ID (6-digit)</label>
-                <input id="inputRoomId" type="text" maxlength="6" placeholder="123456 or leave empty to auto-generate" pattern="[A-Za-z0-9]*" />
+                <input id="inputRoomId" type="text" maxlength="6" placeholder="123456 or leave empty to auto-generate" />
               </div>
 
               <div class="btn-row">
